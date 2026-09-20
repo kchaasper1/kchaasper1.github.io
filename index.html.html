@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>House Game</title>
+<style>
+  :root{ --bg:#20242b; --panel:#2b3038; --text:#eee; --muted:#9aa1ac; --accent:#e0824f; --accent2:#4fae8f; --border:#3c414b; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;padding:16px;}
+  h1{margin:4px 0;font-size:1.4rem;}
+  #startScreen{text-align:center;max-width:360px;margin-top:60px;}
+  #startScreen input{padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);width:100%;margin:10px 0;font-size:1rem;}
+  #startScreen button, .modal button, #gameUI button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:1rem;cursor:pointer;}
+  #status{color:var(--muted);font-size:.85rem;margin-top:8px;}
+  #gameWrap{display:none;flex-direction:column;align-items:center;}
+  #canvas{background:#111;border-radius:10px;touch-action:none;max-width:100%;}
+  #hint{color:var(--muted);font-size:.85rem;margin-top:8px;text-align:center;}
+  #playCta{display:none;margin-top:8px;}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10;}
+  .modal.active{display:flex;}
+  .modal-inner{background:var(--panel);border-radius:14px;padding:20px;width:320px;max-width:92vw;text-align:center;}
+  .modal-inner h2{margin-top:0;}
+  #miniArea{position:relative;height:260px;background:#111;border-radius:8px;overflow:hidden;margin:12px 0;}
+  .falling,.pop{position:absolute;font-size:1.6rem;cursor:pointer;user-select:none;}
+  .hole{position:absolute;width:60px;height:60px;background:#222;border-radius:50%;}
+  #reflexBtn{width:120px;height:120px;border-radius:50%;border:none;font-size:1rem;margin:20px auto;display:block;cursor:pointer;}
+  #miniScore{color:var(--muted);}
+</style>
+</head>
+<body>
+
+<h1>🏠 House Game</h1>
+
+<div id="startScreen">
+  <p>Move between rooms, play the mini-game in each. Others online will appear as they walk around.</p>
+  <input id="nameInput" placeholder="Your name" maxlength="16">
+  <button id="startBtn">Enter the house</button>
+  <div id="status"></div>
+</div>
+
+<div id="gameWrap">
+  <canvas id="canvas" width="720" height="460"></canvas>
+  <div id="hint">Arrow keys / WASD to move.</div>
+  <button id="playCta">Play mini-game (E)</button>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-inner">
+    <h2 id="modalTitle"></h2>
+    <div id="miniArea"></div>
+    <div id="miniScore"></div>
+    <button id="closeModal">Close</button>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* ====== 1) PASTE YOUR FIREBASE CONFIG HERE ====== */
+const firebaseConfig = {
+  apiKey: "AIzaSyBlC2luCyQGEok4heizoj7zR9h4mbdMGGQ",
+  authDomain: "test-cef34.firebaseapp.com",
+  databaseURL: "https://test-cef34-default-rtdb.firebaseio.com",
+  projectId: "test-cef34"
+};
+/* ================================================= */
+
+let db = null, playersRef = null, myId = null, myName = "", myColor = "#e0824f";
+let firebaseOk = false;
+try {
+  if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    playersRef = db.ref("housegame/players");
+    firebaseOk = true;
+  }
+} catch(e){ console.error("Firebase init failed", e); }
+
+const startScreen=document.getElementById('startScreen');
+const statusEl=document.getElementById('status');
+const gameWrap=document.getElementById('gameWrap');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const playCta=document.getElementById('playCta');
+
+statusEl.textContent = firebaseOk
+  ? "Multiplayer connected."
+  : "Running solo — add your Firebase config in the file to enable multiplayer.";
+
+// ---- Rooms layout (3 side-by-side rooms) ----
+const rooms=[
+  {name:'Living Room', x0:0,   x1:240, color:'#2c3550', pad:{x:120,y:230}, game:'reflex'},
+  {name:'Kitchen',     x0:240, x1:480, color:'#3a3324', pad:{x:360,y:230}, game:'chop'},
+  {name:'Bedroom',     x0:480, x1:720, color:'#33243a', pad:{x:600,y:230}, game:'clocks'}
+];
+function roomAt(x){ return rooms.find(r=>x>=r.x0 && x<r.x1) || rooms[0]; }
+
+// ---- Player state ----
+let player={x:120,y:230,r:12};
+const keys={};
+let otherPlayers={};
+let currentRoom=roomAt(player.x);
+
+document.getElementById('startBtn').onclick=()=>{
+  myName=document.getElementById('nameInput').value.trim() || 'Guest';
+  myId='p'+Math.random().toString(36).slice(2,9);
+  myColor=`hsl(${Math.floor(Math.random()*360)},70%,60%)`;
+  startScreen.style.display='none';
+  gameWrap.style.display='flex';
+  initMultiplayer();
+  requestAnimationFrame(loop);
+};
+
+function initMultiplayer(){
+  if(!firebaseOk) return;
+  const myRef=playersRef.child(myId);
+  myRef.onDisconnect().remove();
+  updatePresence();
+  playersRef.on('value', snap=>{
+    const val=snap.val()||{};
+    delete val[myId];
+    otherPlayers=val;
+  });
+}
+let lastSent=0;
+function updatePresence(){
+  if(!firebaseOk) return;
+  const now=Date.now();
+  if(now-lastSent<120) return;
+  lastSent=now;
+  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom.name});
+}
+
+// ---- Movement ----
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key.toLowerCase()==='e') tryOpenGame();
+});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+function update(){
+  let dx=0,dy=0, speed=3.2;
+  if(keys['arrowup']||keys['w']) dy=-speed;
+  if(keys['arrowdown']||keys['s']) dy=speed;
+  if(keys['arrowleft']||keys['a']) dx=-speed;
+  if(keys['arrowright']||keys['d']) dx=speed;
+  player.x=Math.min(720-player.r, Math.max(player.r, player.x+dx));
+  player.y=Math.min(460-player.r, Math.max(player.r, player.y+dy));
+  currentRoom=roomAt(player.x);
+  updatePresence();
+
+  const dist=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
+  playCta.style.display = dist<40 ? 'inline-block' : 'none';
+}
+
+function draw(){
+  ctx.clearRect(0,0,720,460);
+  rooms.forEach(r=>{
+    ctx.fillStyle=r.color;
+    ctx.fillRect(r.x0,0,r.x1-r.x0,460);
+    ctx.fillStyle='#00000055';
+    ctx.beginPath(); ctx.arc(r.pad.x,r.pad.y,22,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff9';
+    ctx.font='12px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(r.name, (r.x0+r.x1)/2, 24);
+    ctx.fillText('mini-game', r.pad.x, r.pad.y+40);
+  });
+  // other players
+  Object.values(otherPlayers).forEach(p=>{
+    drawAvatar(p.x,p.y,p.color,p.name);
+  });
+  // me
+  drawAvatar(player.x,player.y,myColor,myName+' (you)');
+}
+function drawAvatar(x,y,color,label){
+  ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2);
+  ctx.fillStyle=color; ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(label, x, y-16);
+}
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+
+// ---- Mini-games ----
+const modal=document.getElementById('modal');
+const modalTitle=document.getElementById('modalTitle');
+const miniArea=document.getElementById('miniArea');
+const miniScore=document.getElementById('miniScore');
+document.getElementById('closeModal').onclick=closeModal;
+playCta.onclick=tryOpenGame;
+
+let activeTimer=null;
+function tryOpenGame(){
+  const dist=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
+  if(dist<40) openGame(currentRoom.game, currentRoom.name);
+}
+function closeModal(){
+  modal.classList.remove('active');
+  if(activeTimer) clearInterval(activeTimer);
+  miniArea.innerHTML='';
+}
+function openGame(type,label){
+  modal.classList.add('active');
+  modalTitle.textContent=label+" mini-game";
+  miniArea.innerHTML=''; miniScore.textContent='';
+  if(type==='reflex') startReflex();
+  if(type==='chop') startChop();
+  if(type==='clocks') startClocks();
+}
+
+// Reflex tap
+function startReflex(){
+  let round=0, times=[], startT=0;
+  const btn=document.createElement('button');
+  btn.id='reflexBtn'; btn.textContent='Wait...'; btn.style.background='#555';
+  miniArea.appendChild(btn);
+  function nextRound(){
+    if(round>=5){ miniScore.textContent='Avg: '+Math.round(times.reduce((a,b)=>a+b,0)/times.length)+'ms'; btn.textContent='Done!'; return; }
+    btn.style.background='#a33'; btn.textContent='Wait...';
+    setTimeout(()=>{ btn.style.background='#2e6b5e'; btn.textContent='TAP!'; startT=Date.now(); },600+Math.random()*1200);
+  }
+  btn.onclick=()=>{
+    if(btn.textContent!=='TAP!') return;
+    times.push(Date.now()-startT); round++;
+    miniScore.textContent='Round '+round+'/5';
+    nextRound();
+  };
+  nextRound();
+}
+
+// Chop falling items
+function startChop(){
+  let score=0, timeLeft=20;
+  miniScore.textContent='Score: 0 | Time: 20s';
+  const items=['🥕','🥦','🍅','🍆','💣'];
+  activeTimer=setInterval(()=>{
+    timeLeft--;
+    miniScore.textContent='Score: '+score+' | Time: '+timeLeft+'s';
+    if(timeLeft<=0){ clearInterval(activeTimer); miniArea.innerHTML='<p style="padding-top:100px">Final score: '+score+'</p>'; }
+  },1000);
+  const spawn=setInterval(()=>{
+    if(timeLeft<=0){ clearInterval(spawn); return; }
+    const el=document.createElement('div');
+    const emoji=items[Math.floor(Math.random()*items.length)];
+    el.className='falling'; el.textContent=emoji;
+    el.style.left=(Math.random()*220)+'px'; el.style.top='0px';
+    miniArea.appendChild(el);
+    let top=0;
+    const fall=setInterval(()=>{
+      top+=4; el.style.top=top+'px';
+      if(top>230){ clearInterval(fall); el.remove(); }
+    },30);
+    el.onclick=()=>{
+      clearInterval(fall); el.remove();
+      score += emoji==='💣' ? -1 : 1;
+    };
+  },600);
+}
+
+// Whack clocks
+function startClocks(){
+  let score=0, timeLeft=20;
+  miniScore.textContent='Score: 0 | Time: 20s';
+  const holes=[];
+  for(let i=0;i<6;i++){
+    const h=document.createElement('div');
+    h.className='hole';
+    h.style.left=(20+(i%3)*90)+'px';
+    h.style.top=(20+Math.floor(i/3)*120)+'px';
+    miniArea.appendChild(h);
+    holes.push(h);
+  }
+  activeTimer=setInterval(()=>{
+    timeLeft--;
+    miniScore.textContent='Score: '+score+' | Time: '+timeLeft+'s';
+    if(timeLeft<=0){ clearInterval(activeTimer); clearInterval(popper); miniArea.innerHTML='<p style="padding-top:100px">Final score: '+score+'</p>'; }
+  },1000);
+  const popper=setInterval(()=>{
+    if(timeLeft<=0) return;
+    const h=holes[Math.floor(Math.random()*holes.length)];
+    const clock=document.createElement('div');
+    clock.className='pop'; clock.textContent='⏰';
+    clock.style.left=h.style.left; clock.style.top=h.style.top;
+    let clicked=false;
+    clock.onclick=()=>{ if(!clicked){ clicked=true; score++; clock.remove(); } };
+    miniArea.appendChild(clock);
+    setTimeout(()=>{ if(!clicked) clock.remove(); },600);
+  },750);
+}
+</script>
+</body>
+</html>
