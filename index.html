@@ -41,6 +41,7 @@
 
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
+  <div id="moneyDisplay">💰 $0</div>
   <div id="hint">Arrow keys / WASD to move.</div>
   <button id="playCta">Play mini-game (E)</button>
 </div>
@@ -98,6 +99,14 @@ function roomAt(x){ return rooms.find(r=>x>=r.x0 && x<r.x1) || rooms[0]; }
 
 // ---- Player state ----
 let player={x:120,y:230,r:12};
+let facing={dx:0,dy:-1};
+let bullets=[];
+let money=0;
+const moneyDisplay=document.getElementById('moneyDisplay');
+function earnDollar(){
+  money++;
+  moneyDisplay.textContent='💰 $'+money;
+}
 const keys={};
 let otherPlayers={};
 let currentRoom=roomAt(player.x);
@@ -136,6 +145,10 @@ function updatePresence(){
 document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
   if(e.key.toLowerCase()==='e') tryOpenGame();
+  if(e.key===' '){
+    e.preventDefault();
+    bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7});
+  }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
 
@@ -145,6 +158,7 @@ function update(){
   if(keys['arrowdown']||keys['s']) dy=speed;
   if(keys['arrowleft']||keys['a']) dx=-speed;
   if(keys['arrowright']||keys['d']) dx=speed;
+  if(dx||dy) facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
   player.x=Math.min(720-player.r, Math.max(player.r, player.x+dx));
   player.y=Math.min(460-player.r, Math.max(player.r, player.y+dy));
   currentRoom=roomAt(player.x);
@@ -152,6 +166,8 @@ function update(){
 
   const dist=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
   playCta.style.display = dist<40 ? 'inline-block' : 'none';
+  bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
+  bullets=bullets.filter(b=>b.x>0&&b.x<720&&b.y>0&&b.y<460);
 }
 
 function draw(){
@@ -169,6 +185,10 @@ function draw(){
   // other players
   Object.values(otherPlayers).forEach(p=>{
     drawAvatar(p.x,p.y,p.color,p.name);
+  });
+  bullets.forEach(b=>{
+  ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
+  ctx.fillStyle='#ffe066'; ctx.fill();
   });
   // me
   drawAvatar(player.x,player.y,myColor,myName+' (you)');
@@ -209,14 +229,19 @@ function openGame(type,label){
   if(type==='clocks') startClocks();
 }
 
-// Reflex tap
+// Reflex tap — completes after 5 rounds
 function startReflex(){
-  let round=0, times=[], startT=0;
+  let round=0, times=[], startT=0, done=false;
   const btn=document.createElement('button');
   btn.id='reflexBtn'; btn.textContent='Wait...'; btn.style.background='#555';
   miniArea.appendChild(btn);
   function nextRound(){
-    if(round>=5){ miniScore.textContent='Avg: '+Math.round(times.reduce((a,b)=>a+b,0)/times.length)+'ms'; btn.textContent='Done!'; return; }
+    if(round>=5){
+      miniScore.textContent='Avg: '+Math.round(times.reduce((a,b)=>a+b,0)/times.length)+'ms — ✅ Completed! +$1';
+      btn.textContent='Done!';
+      if(!done){ done=true; earnDollar(); }
+      return;
+    }
     btn.style.background='#a33'; btn.textContent='Wait...';
     setTimeout(()=>{ btn.style.background='#2e6b5e'; btn.textContent='TAP!'; startT=Date.now(); },600+Math.random()*1200);
   }
@@ -229,18 +254,18 @@ function startReflex(){
   nextRound();
 }
 
-// Chop falling items
+// Chop — completes when target score is reached
 function startChop(){
-  let score=0, timeLeft=20;
-  miniScore.textContent='Score: 0 | Time: 20s';
+  let score=0, timeLeft=20, target=12, done=false;
+  miniScore.textContent='Score: 0 / '+target+' | Time: 20s';
   const items=['🥕','🥦','🍅','🍆','💣'];
   activeTimer=setInterval(()=>{
     timeLeft--;
-    miniScore.textContent='Score: '+score+' | Time: '+timeLeft+'s';
-    if(timeLeft<=0){ clearInterval(activeTimer); miniArea.innerHTML='<p style="padding-top:100px">Final score: '+score+'</p>'; }
+    if(!done) miniScore.textContent='Score: '+score+' / '+target+' | Time: '+timeLeft+'s';
+    if(timeLeft<=0 && !done){ clearInterval(activeTimer); miniArea.innerHTML='<p style="padding-top:100px">Time up — score '+score+'/'+target+'. Try again!</p>'; }
   },1000);
   const spawn=setInterval(()=>{
-    if(timeLeft<=0){ clearInterval(spawn); return; }
+    if(timeLeft<=0||done){ clearInterval(spawn); return; }
     const el=document.createElement('div');
     const emoji=items[Math.floor(Math.random()*items.length)];
     el.className='falling'; el.textContent=emoji;
@@ -254,14 +279,19 @@ function startChop(){
     el.onclick=()=>{
       clearInterval(fall); el.remove();
       score += emoji==='💣' ? -1 : 1;
+      if(score>=target && !done){
+        done=true; clearInterval(activeTimer); clearInterval(spawn);
+        miniScore.textContent='✅ Completed! +$1';
+        earnDollar();
+      }
     };
   },600);
 }
 
-// Whack clocks
+// Whack clocks — completes when target score is reached
 function startClocks(){
-  let score=0, timeLeft=20;
-  miniScore.textContent='Score: 0 | Time: 20s';
+  let score=0, timeLeft=20, target=8, done=false;
+  miniScore.textContent='Score: 0 / '+target+' | Time: 20s';
   const holes=[];
   for(let i=0;i<6;i++){
     const h=document.createElement('div');
@@ -273,17 +303,26 @@ function startClocks(){
   }
   activeTimer=setInterval(()=>{
     timeLeft--;
-    miniScore.textContent='Score: '+score+' | Time: '+timeLeft+'s';
-    if(timeLeft<=0){ clearInterval(activeTimer); clearInterval(popper); miniArea.innerHTML='<p style="padding-top:100px">Final score: '+score+'</p>'; }
+    if(!done) miniScore.textContent='Score: '+score+' / '+target+' | Time: '+timeLeft+'s';
+    if(timeLeft<=0 && !done){ clearInterval(activeTimer); clearInterval(popper); miniArea.innerHTML='<p style="padding-top:100px">Time up — score '+score+'/'+target+'. Try again!</p>'; }
   },1000);
   const popper=setInterval(()=>{
-    if(timeLeft<=0) return;
+    if(timeLeft<=0||done) return;
     const h=holes[Math.floor(Math.random()*holes.length)];
     const clock=document.createElement('div');
     clock.className='pop'; clock.textContent='⏰';
     clock.style.left=h.style.left; clock.style.top=h.style.top;
     let clicked=false;
-    clock.onclick=()=>{ if(!clicked){ clicked=true; score++; clock.remove(); } };
+    clock.onclick=()=>{
+      if(!clicked){
+        clicked=true; score++; clock.remove();
+        if(score>=target && !done){
+          done=true; clearInterval(activeTimer); clearInterval(popper);
+          miniScore.textContent='✅ Completed! +$1';
+          earnDollar();
+        }
+      }
+    };
     miniArea.appendChild(clock);
     setTimeout(()=>{ if(!clicked) clock.remove(); },600);
   },750);
