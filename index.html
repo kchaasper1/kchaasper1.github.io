@@ -152,7 +152,7 @@ function updatePresence(){
 // ---- Movement ----
 document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
-  f(e.key.toLowerCase()==='e') onInteract();
+  if(e.key.toLowerCase()==='e') onInteract();
   if(e.key===' '){
     e.preventDefault();
     bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7});
