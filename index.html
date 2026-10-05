@@ -97,8 +97,16 @@ const rooms=[
 ];
 function roomAt(x){ return rooms.find(r=>x>=r.x0 && x<r.x1) || rooms[0]; }
 
+let scene = 'outside'; // 'outside' | 'inside'
+const outside = {
+  building:{x:260,y:40,w:200,h:220},
+  door:{x:340,y:240,w:40,h:20},
+  label:{x:360,y:30}
+};
+const insideExit = {x:30,y:230}; // walk here (inside) to step back out to the street
+
 // ---- Player state ----
-let player={x:120,y:230,r:12};
+let player={x:360,y:420,r:12};
 let facing={dx:0,dy:-1};
 let bullets=[];
 let money=0;
@@ -138,13 +146,13 @@ function updatePresence(){
   const now=Date.now();
   if(now-lastSent<120) return;
   lastSent=now;
-  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom.name});
+  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene});
 }
 
 // ---- Movement ----
 document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
-  if(e.key.toLowerCase()==='e') tryOpenGame();
+  f(e.key.toLowerCase()==='e') onInteract();
   if(e.key===' '){
     e.preventDefault();
     bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7});
@@ -159,19 +167,68 @@ function update(){
   if(keys['arrowleft']||keys['a']) dx=-speed;
   if(keys['arrowright']||keys['d']) dx=speed;
   if(dx||dy) facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
-  player.x=Math.min(720-player.r, Math.max(player.r, player.x+dx));
-  player.y=Math.min(460-player.r, Math.max(player.r, player.y+dy));
-  currentRoom=roomAt(player.x);
+
+  let nx=Math.min(720-player.r, Math.max(player.r, player.x+dx));
+  let ny=Math.min(460-player.r, Math.max(player.r, player.y+dy));
+
+  if(scene==='outside'){
+    const b=outside.building;
+    const inside_x = nx>b.x && nx<b.x+b.w;
+    const inside_y = ny>b.y && ny<b.y+b.h;
+    const inDoorX = nx>outside.door.x && nx<outside.door.x+outside.door.w;
+    const blocked = inside_x && inside_y && !(inDoorX && ny>b.y+b.h-25);
+    if(!blocked){ player.x=nx; player.y=ny; }
+  } else {
+    player.x=nx; player.y=ny;
+  }
+
+  if(scene==='inside') currentRoom=roomAt(player.x);
   updatePresence();
 
-  const dist=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
-  playCta.style.display = dist<40 ? 'inline-block' : 'none';
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
   bullets=bullets.filter(b=>b.x>0&&b.x<720&&b.y>0&&b.y<460);
+
+  if(scene==='outside'){
+    const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
+    playCta.textContent='Enter supermarket (E)';
+    playCta.style.display = d<35 ? 'inline-block' : 'none';
+  } else {
+    const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
+    const dPad=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
+    if(dExit<35){ playCta.textContent='Exit to street (E)'; playCta.style.display='inline-block'; }
+    else if(dPad<40){ playCta.textContent='Play mini-game (E)'; playCta.style.display='inline-block'; }
+    else playCta.style.display='none';
+  }
 }
 
 function draw(){
   ctx.clearRect(0,0,720,460);
+  if(scene==='outside') drawOutside(); else drawInside();
+
+  bullets.forEach(b=>{
+    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
+    ctx.fillStyle='#ffe066'; ctx.fill();
+  });
+
+  Object.values(otherPlayers).forEach(p=>{
+    if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
+  });
+  drawAvatar(player.x,player.y,myColor,myName+' (you)');
+}
+
+function drawOutside(){
+  ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,720,460); // grass/ground
+  ctx.fillStyle='#555'; ctx.fillRect(0,300,720,80); // road
+  ctx.fillStyle='#777'; ctx.fillRect(0,380,720,20); // sidewalk
+  const b=outside.building;
+  ctx.fillStyle='#8a7054'; ctx.fillRect(b.x,b.y,b.w,b.h);
+  ctx.fillStyle='#5b4a38'; ctx.fillRect(outside.door.x,outside.door.y,outside.door.w,outside.door.h+(b.y+b.h-outside.door.y));
+  ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('SUPERMARKET', outside.label.x, outside.label.y);
+}
+
+function drawInside(){
+  ctx.fillStyle='#15171c'; ctx.fillRect(0,0,720,460);
   rooms.forEach(r=>{
     ctx.fillStyle=r.color;
     ctx.fillRect(r.x0,0,r.x1-r.x0,460);
@@ -182,16 +239,9 @@ function draw(){
     ctx.fillText(r.name, (r.x0+r.x1)/2, 24);
     ctx.fillText('mini-game', r.pad.x, r.pad.y+40);
   });
-  // other players
-  Object.values(otherPlayers).forEach(p=>{
-    drawAvatar(p.x,p.y,p.color,p.name);
-  });
-  bullets.forEach(b=>{
-  ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
-  ctx.fillStyle='#ffe066'; ctx.fill();
-  });
-  // me
-  drawAvatar(player.x,player.y,myColor,myName+' (you)');
+  ctx.fillStyle='#4fae8f'; ctx.fillRect(insideExit.x-10,insideExit.y-16,20,32);
+  ctx.fillStyle='#fff9'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('exit', insideExit.x, insideExit.y+30);
 }
 function drawAvatar(x,y,color,label){
   ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2);
@@ -208,13 +258,22 @@ const modalTitle=document.getElementById('modalTitle');
 const miniArea=document.getElementById('miniArea');
 const miniScore=document.getElementById('miniScore');
 document.getElementById('closeModal').onclick=closeModal;
-playCta.onclick=tryOpenGame;
+playCta.onclick=onInteract;
 
 let activeTimer=null;
-function tryOpenGame(){
-  const dist=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
-  if(dist<40) openGame(currentRoom.game, currentRoom.name);
+function onInteract(){
+  if(scene==='outside'){
+    const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
+    if(d<35) enterBuilding();
+  } else {
+    const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
+    if(dExit<35){ exitBuilding(); return; }
+    const d=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
+    if(d<40) openGame(currentRoom.game, currentRoom.name);
+  }
 }
+function enterBuilding(){ scene='inside'; player.x=50; player.y=230; }
+function exitBuilding(){ scene='outside'; player.x=360; player.y=300; }
 function closeModal(){
   modal.classList.remove('active');
   if(activeTimer) clearInterval(activeTimer);
