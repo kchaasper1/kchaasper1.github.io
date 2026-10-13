@@ -42,6 +42,7 @@
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
   <div id="moneyDisplay">💰 $0</div>
+  <div id="toast"></div>
   <div id="hint">Arrow keys / WASD to move.</div>
   <button id="playCta">Play mini-game (E)</button>
 </div>
@@ -108,7 +109,20 @@ const insideExit = {x:30,y:230}; // walk here (inside) to step back out to the s
 // ---- Player state ----
 let player={x:360,y:420,r:12};
 let facing={dx:0,dy:-1};
+  
 let bullets=[];
+  
+const alley = {x:550,y:40,w:140,h:140};
+const GOON_COST = 5;
+let goons=[]; // {id,x,y,tx,ty,speed}
+let goonCounter=0;
+const toastEl=document.getElementById('toast');
+function toast(msg){
+  toastEl.textContent=msg;
+  clearTimeout(toastEl._t);
+  toastEl._t=setTimeout(()=>toastEl.textContent='',1800);
+}
+
 let money=0;
 const moneyDisplay=document.getElementById('moneyDisplay');
 function earnDollar(){
@@ -140,6 +154,7 @@ function initMultiplayer(){
     otherPlayers=val;
   });
 }
+
 let lastSent=0;
 function updatePresence(){
   if(!firebaseOk) return;
@@ -187,11 +202,14 @@ function update(){
 
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
   bullets=bullets.filter(b=>b.x>0&&b.x<720&&b.y>0&&b.y<460);
+  updateGoons();
 
   if(scene==='outside'){
     const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
-    playCta.textContent='Enter supermarket (E)';
-    playCta.style.display = d<35 ? 'inline-block' : 'none';
+    const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
+    if(d<35){ playCta.textContent='Enter supermarket (E)'; playCta.style.display='inline-block'; }
+    else if(inAlley){ playCta.textContent='Hire goon - $'+GOON_COST+' (E)'; playCta.style.display='inline-block'; }
+    else playCta.style.display='none';
   } else {
     const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
     const dPad=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
@@ -225,6 +243,18 @@ function drawOutside(){
   ctx.fillStyle='#5b4a38'; ctx.fillRect(outside.door.x,outside.door.y,outside.door.w,outside.door.h+(b.y+b.h-outside.door.y));
   ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
   ctx.fillText('SUPERMARKET', outside.label.x, outside.label.y);
+
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(alley.x,alley.y,alley.w,alley.h);
+  ctx.fillStyle='#ccc'; ctx.font='13px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('DARK ALLEY', alley.x+alley.w/2, alley.y+20);
+  ctx.font='11px sans-serif'; ctx.fillStyle='#999';
+  ctx.fillText('Hire goon: $'+GOON_COST, alley.x+alley.w/2, alley.y+38);
+
+  goons.forEach(g=>{
+    ctx.beginPath(); ctx.arc(g.x,g.y,10,0,Math.PI*2);
+    ctx.fillStyle='#444'; ctx.fill();
+    ctx.strokeStyle='#999'; ctx.stroke();
+  });
 }
 
 function drawInside(){
@@ -264,7 +294,9 @@ let activeTimer=null;
 function onInteract(){
   if(scene==='outside'){
     const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
-    if(d<35) enterBuilding();
+    if(d<35){ enterBuilding(); return; }
+    const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
+    if(inAlley) hireGoon();
   } else {
     const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
     if(dExit<35){ exitBuilding(); return; }
@@ -272,6 +304,7 @@ function onInteract(){
     if(d<40) openGame(currentRoom.game, currentRoom.name);
   }
 }
+  
 function enterBuilding(){ scene='inside'; player.x=50; player.y=230; }
 function exitBuilding(){ scene='outside'; player.x=360; player.y=300; }
 function closeModal(){
@@ -279,6 +312,17 @@ function closeModal(){
   if(activeTimer) clearInterval(activeTimer);
   miniArea.innerHTML='';
 }
+  
+function hireGoon(){
+  if(money<GOON_COST){ toast('Need $'+GOON_COST+' to hire a goon'); return; }
+  money-=GOON_COST;
+  moneyDisplay.textContent='💰 $'+money;
+  goonCounter++;
+  goons.push({id:'g'+goonCounter, x:player.x, y:player.y, tx:player.x, ty:player.y, speed:1.2});
+  toast('Hired a goon! ('+goons.length+' total)');
+}
+  
+
 function openGame(type,label){
   modal.classList.add('active');
   modalTitle.textContent=label+" mini-game";
