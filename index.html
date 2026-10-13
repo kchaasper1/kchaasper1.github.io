@@ -296,7 +296,14 @@ function drawAvatar(x,y,color,label){
   ctx.fillText(label, x, y-16);
 }
 
-function loop(){ update(); draw(); requestAnimationFrame(loop); }
+function loop(){
+  try { update(); draw(); }
+  catch(err){
+    console.error(err);
+    document.getElementById('hint').textContent='Error: '+err.message;
+  }
+  requestAnimationFrame(loop);
+}
 
 // ---- Mini-games ----
 const modal=document.getElementById('modal');
