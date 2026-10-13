@@ -178,7 +178,7 @@ document.addEventListener('keydown',e=>{
   if(e.key.toLowerCase()==='e') onInteract();
   if(e.key===' '){
     e.preventDefault();
-    bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7});
+    bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7,owner:'player'});
   }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
@@ -209,7 +209,22 @@ function update(){
   updatePresence();
 
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
-  bullets=bullets.filter(b=>b.x>0&&b.x<720&&b.y>0&&b.y<460);
+  if(scene==='outside'){
+  bullets.forEach(b=>{
+    if(b.dead) return;
+    pedestrians.forEach(p=>{
+      if(b.dead||p.dead) return;
+      if(Math.hypot(p.x-b.x,p.y-b.y)<11){
+        b.dead=true; p.dead=true;
+        money+=p.money;
+        moneyDisplay.textContent='💰 $'+money;
+        toast((b.owner==='goon'?'A goon':'You')+' shot a pedestrian'+(p.money?' (+$'+p.money+')':''));
+      }
+    });
+  });
+}
+  bullets=bullets.filter(b=>!b.dead&&b.x>0&&b.x<720&&b.y>0&&b.y<460);
+  pedestrians=pedestrians.filter(p=>!p.dead);
   updatePedestrians();
   updateGoons();
 
@@ -233,9 +248,10 @@ function draw(){
   if(scene==='outside') drawOutside(); else drawInside();
 
   bullets.forEach(b=>{
-    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
-    ctx.fillStyle='#ffe066'; ctx.fill();
-  });
+  if(b.owner==='goon' && scene!=='outside') return;
+  ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
+  ctx.fillStyle=b.owner==='goon' ? '#ff8a5c' : '#ffe066'; ctx.fill();
+});
 
   Object.values(otherPlayers).forEach(p=>{
     if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
@@ -344,10 +360,11 @@ function hireGoon(){
   goons.push({id:'g'+goonCounter, x:player.x, y:player.y, tx:player.x, ty:player.y, speed:1.2});
   toast('Hired a goon! ('+goons.length+' total)');
 }
+const SHOOT_CHANCE=0.05;     // per frame once the goon's cooldown is over
+const GOON_BULLET_SPEED=6;
 function updateGoons(){
   const now=Date.now();
   goons.forEach(g=>{
-    // chase the closest pedestrian with money within 140px
     let prey=null, best=140;
     pedestrians.forEach(p=>{
       if(p.money<=0) return;
@@ -361,6 +378,13 @@ function updateGoons(){
     const ang=Math.atan2(g.ty-g.y,g.tx-g.x);
     g.x+=Math.cos(ang)*g.speed;
     g.y+=Math.sin(ang)*g.speed;
+
+    // shoot at the target (1.5s cooldown, aim is slightly inaccurate)
+    if(prey && scene==='outside' && now>=(g.nextShot||0) && Math.random()<SHOOT_CHANCE){
+      g.nextShot=now+1500;
+      const a=Math.atan2(prey.y-g.y,prey.x-g.x)+(Math.random()-0.5)*0.5;
+      bullets.push({x:g.x,y:g.y,dx:Math.cos(a)*GOON_BULLET_SPEED,dy:Math.sin(a)*GOON_BULLET_SPEED,owner:'goon'});
+    }
 
     // steal attempt (2 second cooldown per goon)
     if(now<(g.nextSteal||0)) return;
@@ -381,28 +405,46 @@ function updateGoons(){
     });
   });
 }
+  
 const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
 let pedestrians=[];
-for(let i=0;i<6;i++){
-  const x=20+Math.random()*680, y=305+Math.random()*85;
+const MAX_PEDS=8;
+const LEAVE_CHANCE=0.0008;  // per frame, per pedestrian (roughly once every 20s)
+const SPAWN_CHANCE=0.004;   // per frame while below MAX_PEDS (roughly one every 4s)
+
+function spawnPedestrian(fromEdge){
+  const y=305+Math.random()*85;
+  const x=fromEdge ? (Math.random()<0.5 ? -15 : 735) : 20+Math.random()*680;
   pedestrians.push({
-    x, y, tx:x, ty:y,
+    x, y, tx:x, ty:y, leaving:false,
     speed:0.6+Math.random()*0.4,
     money:1+Math.floor(Math.random()*10),
     color:`hsl(${Math.floor(Math.random()*360)},35%,65%)`
   });
 }
+for(let i=0;i<6;i++) spawnPedestrian(false);
+  
 function updatePedestrians(){
   pedestrians.forEach(p=>{
-    if(Math.hypot(p.tx-p.x,p.ty-p.y)<4){
+    // randomly decide to leave via the nearest side of the screen
+    if(!p.leaving && Math.random()<LEAVE_CHANCE){
+      p.leaving=true;
+      p.tx = p.x<360 ? -30 : 750;
+      p.ty = p.y;
+    }
+    if(!p.leaving && Math.hypot(p.tx-p.x,p.ty-p.y)<4){
       p.tx=10+Math.random()*700;
-      p.ty=305+Math.random()*85; // stays on the road/sidewalk band
+      p.ty=305+Math.random()*85;
     }
     const ang=Math.atan2(p.ty-p.y,p.tx-p.x);
     p.x+=Math.cos(ang)*p.speed;
     p.y+=Math.sin(ang)*p.speed;
-    if(p.money<10 && Math.random()<0.001) p.money++; // slowly earn money back
+    if(!p.leaving && p.money<10 && Math.random()<0.001) p.money++;
+    if(p.leaving && (p.x<-20||p.x>740)) p.gone=true;
   });
+  pedestrians=pedestrians.filter(p=>!p.gone);
+  // new arrivals walk in from offscreen
+  if(pedestrians.length<MAX_PEDS && Math.random()<SPAWN_CHANCE) spawnPedestrian(true);
 }
 
 function openGame(type,label){
