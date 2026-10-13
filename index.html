@@ -45,7 +45,7 @@
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
   
-  <div id="moneyDisplay">💰 $0</div]>
+  <div id="moneyDisplay">💰 $5</div]>
   
   <div id="toast"></div>
   
@@ -210,6 +210,7 @@ function update(){
 
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
   bullets=bullets.filter(b=>b.x>0&&b.x<720&&b.y>0&&b.y<460);
+  updatePedestrians();
   updateGoons();
 
   if(scene==='outside'){
@@ -258,6 +259,13 @@ function drawOutside(){
   ctx.font='11px sans-serif'; ctx.fillStyle='#999';
   ctx.fillText('Hire goon: $'+GOON_COST, alley.x+alley.w/2, alley.y+38);
 
+  pedestrians.forEach(p=>{
+  ctx.beginPath(); ctx.arc(p.x,p.y,9,0,Math.PI*2);
+  ctx.fillStyle=p.color; ctx.fill();
+  ctx.fillStyle='#8f8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('$'+p.money, p.x, p.y-14);
+});
+  
   goons.forEach(g=>{
     ctx.beginPath(); ctx.arc(g.x,g.y,10,0,Math.PI*2);
     ctx.fillStyle='#444'; ctx.fill();
@@ -330,12 +338,63 @@ function hireGoon(){
   toast('Hired a goon! ('+goons.length+' total)');
 }
 function updateGoons(){
+  const now=Date.now();
   goons.forEach(g=>{
-    const d=Math.hypot(g.tx-g.x, g.ty-g.y);
-    if(d<4){ g.tx=20+Math.random()*680; g.ty=20+Math.random()*420; }
-    const ang=Math.atan2(g.ty-g.y, g.tx-g.x);
+    // chase the closest pedestrian with money within 140px
+    let prey=null, best=140;
+    pedestrians.forEach(p=>{
+      if(p.money<=0) return;
+      const d=Math.hypot(p.x-g.x,p.y-g.y);
+      if(d<best){ best=d; prey=p; }
+    });
+    if(prey){ g.tx=prey.x; g.ty=prey.y; }
+    else if(Math.hypot(g.tx-g.x,g.ty-g.y)<4){
+      g.tx=20+Math.random()*680; g.ty=20+Math.random()*420;
+    }
+    const ang=Math.atan2(g.ty-g.y,g.tx-g.x);
     g.x+=Math.cos(ang)*g.speed;
     g.y+=Math.sin(ang)*g.speed;
+
+    // steal attempt (2 second cooldown per goon)
+    if(now<(g.nextSteal||0)) return;
+    pedestrians.forEach(p=>{
+      if(p.money<=0) return;
+      if(Math.hypot(p.x-g.x,p.y-g.y)<16){
+        g.nextSteal=now+2000;
+        if(Math.random()<STEAL_CHANCE){
+          const amt=1+Math.floor(Math.random()*Math.min(3,p.money));
+          p.money-=amt;
+          money+=amt;
+          moneyDisplay.textContent='💰 $'+money;
+          toast('Goon stole $'+amt+'!');
+        } else {
+          toast('A goon failed to steal...');
+        }
+      }
+    });
+  });
+}
+const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
+let pedestrians=[];
+for(let i=0;i<6;i++){
+  const x=20+Math.random()*680, y=305+Math.random()*85;
+  pedestrians.push({
+    x, y, tx:x, ty:y,
+    speed:0.6+Math.random()*0.4,
+    money:1+Math.floor(Math.random()*10),
+    color:`hsl(${Math.floor(Math.random()*360)},35%,65%)`
+  });
+}
+function updatePedestrians(){
+  pedestrians.forEach(p=>{
+    if(Math.hypot(p.tx-p.x,p.ty-p.y)<4){
+      p.tx=10+Math.random()*700;
+      p.ty=305+Math.random()*85; // stays on the road/sidewalk band
+    }
+    const ang=Math.atan2(p.ty-p.y,p.tx-p.x);
+    p.x+=Math.cos(ang)*p.speed;
+    p.y+=Math.sin(ang)*p.speed;
+    if(p.money<10 && Math.random()<0.001) p.money++; // slowly earn money back
   });
 }
 
