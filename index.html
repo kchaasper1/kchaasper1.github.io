@@ -360,7 +360,7 @@ function hireGoon(){
   goons.push({id:'g'+goonCounter, x:player.x, y:player.y, tx:player.x, ty:player.y, speed:1.2});
   toast('Hired a goon! ('+goons.length+' total)');
 }
-const SHOOT_CHANCE=0.05;     // per frame once the goon's cooldown is over
+const SHOOT_CHANCE=0.01;     // per frame once the goon's cooldown is over
 const GOON_BULLET_SPEED=6;
 function updateGoons(){
   const now=Date.now();
