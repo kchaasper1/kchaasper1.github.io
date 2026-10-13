@@ -25,7 +25,9 @@
   .falling,.pop{position:absolute;font-size:1.6rem;cursor:pointer;user-select:none;}
   .hole{position:absolute;width:60px;height:60px;background:#222;border-radius:50%;}
   #reflexBtn{width:120px;height:120px;border-radius:50%;border:none;font-size:1rem;margin:20px auto;display:block;cursor:pointer;}
+  
   #miniScore{color:var(--muted);}
+  
   #toast{min-height:18px;color:var(--accent);font-size:.85rem;margin-top:4px;}
 </style>
 </head>
@@ -42,9 +44,13 @@
 
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
-  <div id="moneyDisplay">💰 $0</div>
+  
+  <div id="moneyDisplay">💰 $0</div]>
+  
   <div id="toast"></div>
+  
   <div id="hint">Arrow keys / WASD to move.</div>
+  
   <button id="playCta">Play mini-game (E)</button>
 </div>
 
@@ -130,6 +136,7 @@ function earnDollar(){
   money++;
   moneyDisplay.textContent='💰 $'+money;
 }
+  
 const keys={};
 let otherPlayers={};
 let currentRoom=roomAt(player.x);
@@ -322,7 +329,15 @@ function hireGoon(){
   goons.push({id:'g'+goonCounter, x:player.x, y:player.y, tx:player.x, ty:player.y, speed:1.2});
   toast('Hired a goon! ('+goons.length+' total)');
 }
-  
+function updateGoons(){
+  goons.forEach(g=>{
+    const d=Math.hypot(g.tx-g.x, g.ty-g.y);
+    if(d<4){ g.tx=20+Math.random()*680; g.ty=20+Math.random()*420; }
+    const ang=Math.atan2(g.ty-g.y, g.tx-g.x);
+    g.x+=Math.cos(ang)*g.speed;
+    g.y+=Math.sin(ang)*g.speed;
+  });
+}
 
 function openGame(type,label){
   modal.classList.add('active');
