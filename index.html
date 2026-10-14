@@ -29,6 +29,9 @@
   #miniScore{color:var(--muted);}
   
   #toast{min-height:18px;color:var(--accent);font-size:.85rem;margin-top:4px;}
+
+  button{touch-action:manipulation;}
+  #fireBtn{display:none;margin-top:8px;margin-left:8px;}
 </style>
 </head>
 <body>
@@ -53,6 +56,7 @@
   <div id="hint">Arrow keys / WASD to move. Space to shoot.</div>
   
   <button id="playCta">Play mini-game (E)</button>
+  <button id="fireBtn">🔫 Fire</button>
 </div>
 
 
@@ -132,6 +136,35 @@ const insideExit = {x:30,y:230}; // walk here (inside) to step back out to the s
 // ---- Player state ----
 let player={x:360,y:420,r:12};
 let facing={dx:0,dy:-1};
+
+const touchMode = window.matchMedia('(pointer: coarse)').matches; // set to true to test on desktop
+let moveTarget=null;
+const fireBtn=document.getElementById('fireBtn');
+
+function fireBullet(){
+  bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7,owner:'player'});
+}
+fireBtn.addEventListener('pointerdown',e=>{ e.preventDefault(); fireBullet(); });
+
+function canvasPoint(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*canvas.width/r.width, y:(e.clientY-r.top)*canvas.height/r.height};
+}
+
+// returns the interactive spot under a tap (door, alley, exit, mini-game pad), if any
+function tappedInteractable(x,y){
+  if(scene==='outside'){
+    const dx0=outside.door.x+outside.door.w/2, dy0=outside.door.y;
+    if(Math.hypot(x-dx0,y-dy0)<40) return {x:dx0,y:dy0,r:35};
+    if(x>alley.x&&x<alley.x+alley.w&&y>alley.y&&y<alley.y+alley.h)
+      return {x:alley.x+alley.w/2,y:alley.y+alley.h/2,r:70};
+  } else {
+    if(Math.hypot(x-insideExit.x,y-insideExit.y)<40) return {x:insideExit.x,y:insideExit.y,r:35};
+    for(const r of rooms)
+      if(Math.hypot(x-r.pad.x,y-r.pad.y)<40) return {x:r.pad.x,y:r.pad.y,r:40};
+  }
+  return null;
+}
   
 let bullets=[];
   
@@ -145,6 +178,27 @@ function toast(msg){
   clearTimeout(toastEl._t);
   toastEl._t=setTimeout(()=>toastEl.textContent='',1800);
 }
+
+let pointerDown=false;
+canvas.addEventListener('pointerdown',e=>{
+  if(!touchMode) return;
+  e.preventDefault();
+  pointerDown=true;
+  const p=canvasPoint(e);
+  const t=tappedInteractable(p.x,p.y);
+  if(t){
+    if(Math.hypot(player.x-t.x,player.y-t.y)<t.r) onInteract(); // already there: act
+    else moveTarget={x:t.x,y:t.y};                              // otherwise walk there first
+  } else {
+    moveTarget=p;
+  }
+});
+canvas.addEventListener('pointermove',e=>{       // dragging a finger steers
+  if(!touchMode||!pointerDown) return;
+  const p=canvasPoint(e);
+  if(!tappedInteractable(p.x,p.y)) moveTarget=p;
+});
+window.addEventListener('pointerup',()=>pointerDown=false);
 
 let money=5;
 const moneyDisplay=document.getElementById('moneyDisplay');
@@ -167,6 +221,7 @@ document.getElementById('startBtn').onclick=()=>{
   gameWrap.style.display='flex';
   initMultiplayer();
   requestAnimationFrame(loop);
+  startSimulation();
 };
 
 
@@ -378,13 +433,27 @@ function drawAvatar(x,y,color,label){
 
 
 
-function loop(){
-  try { update(); draw(); }
-  catch(err){
-    console.error(err);
-    document.getElementById('hint').textContent='Error: '+err.message;
+function loop(){ draw(); requestAnimationFrame(loop); }
+
+const STEP_MS=1000/60;
+let lastTick=Date.now();
+function tick(){
+  const now=Date.now();
+  const raw=Math.floor((now-lastTick)/STEP_MS);
+  if(raw<1) return;
+  const steps=Math.min(raw,180);               // catch up at most ~3s at once
+  lastTick = raw>180 ? now : lastTick+steps*STEP_MS;
+  for(let i=0;i<steps;i++) update();
+}
+function startSimulation(){
+  lastTick=Date.now();
+  try{
+    // a Web Worker's timer isn't throttled as hard as the page's own timers in background tabs
+    const w=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),16)'],{type:'text/javascript'})));
+    w.onmessage=tick;
+  }catch(e){
+    setInterval(tick,16);
   }
-  requestAnimationFrame(loop);
 }
 
 
