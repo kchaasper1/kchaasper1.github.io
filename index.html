@@ -265,23 +265,17 @@ function update(){
   updatePresence();
 
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
+  
   if(scene==='outside'){
-  bullets.forEach(b=>{
-    if(b.dead) return;
-    pedestrians.forEach(p=>{
-      if(b.dead||p.dead) return;
-      if(Math.hypot(p.x-b.x,p.y-b.y)<11){
-        b.dead=true; p.dead=true;
-        money+=p.money;
-        moneyDisplay.textContent='💰 $'+money;
-        toast((b.owner==='goon'?'A goon':'You')+' shot a pedestrian'+(p.money?' (+$'+p.money+')':''));
+    bullets.forEach(b=>{
+      if(b.dead) return;
+      for(const p of pedestrians){
+        if(Math.hypot(p.x-b.x,p.y-b.y)<11){ b.dead=true; killPed(p,b.owner); break; }
       }
     });
-  });
-}
-
+  }
   bullets=bullets.filter(b=>!b.dead&&b.x>0&&b.x<720&&b.y>0&&b.y<460);
-  pedestrians=pedestrians.filter(p=>!p.dead);
+  
   updatePedestrians();
   updateGoons();
   
@@ -318,6 +312,14 @@ function draw(){
   drawAvatar(player.x,player.y,myColor,myName+' (you)');
 }
 
+function drawGoon(x,y,label){
+  ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
+  ctx.fillStyle='#444'; ctx.fill();
+  ctx.strokeStyle='#999'; ctx.stroke();
+  ctx.fillStyle='#ddd'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(label, x, y-15);
+}
+
 function drawOutside(){
   ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,720,460); // grass/ground
   ctx.fillStyle='#555'; ctx.fillRect(0,300,720,80); // road
@@ -335,16 +337,19 @@ function drawOutside(){
   ctx.fillText('Hire goon: $'+GOON_COST, alley.x+alley.w/2, alley.y+38);
 
   pedestrians.forEach(p=>{
-  ctx.beginPath(); ctx.arc(p.x,p.y,9,0,Math.PI*2);
-  ctx.fillStyle=p.color; ctx.fill();
-  ctx.fillStyle='#8f8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
-  ctx.fillText('$'+p.money, p.x, p.y-14);
-});
-  
-  goons.forEach(g=>{
-    ctx.beginPath(); ctx.arc(g.x,g.y,10,0,Math.PI*2);
-    ctx.fillStyle='#444'; ctx.fill();
-    ctx.strokeStyle='#999'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x,p.y,9,0,Math.PI*2);
+    ctx.fillStyle=p.color; ctx.fill();
+    ctx.fillStyle='#8f8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('$'+p.money, p.x, p.y-14);
+  });
+
+  // your goons
+  goons.forEach(g=>drawGoon(g.x,g.y,myName+"'s goon"));
+  // other players' goons
+  Object.keys(otherGoons).forEach(oid=>{
+    const owner=otherPlayers[oid];
+    if(oid===myId || !owner) return;
+    Object.values(otherGoons[oid]||{}).forEach(g=>drawGoon(g.x,g.y,owner.name+"'s goon"));
   });
 }
 
