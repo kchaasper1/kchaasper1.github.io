@@ -214,6 +214,11 @@ let currentRoom=roomAt(player.x);
 
 
 document.getElementById('startBtn').onclick=()=>{
+  if(touchMode){
+  document.getElementById('hint').textContent='Tap to walk. Tap a door, the alley or a mini-game spot while standing at it to use it.';
+  fireBtn.style.display='inline-block';
+}
+  
   myName=document.getElementById('nameInput').value.trim() || 'Guest';
   myId='p'+Math.random().toString(36).slice(2,9);
   myColor=`hsl(${Math.floor(Math.random()*360)},70%,60%)`;
@@ -233,11 +238,15 @@ function initMultiplayer(){
   updatePresence();
 
   playersRef.on('value', snap=>{
-    const val=snap.val()||{};
-    delete val[myId];
-    otherPlayers=val;
-    playersLoaded=true;
-  });
+  const val=snap.val()||{};
+  delete val[myId];
+  const firstLoad=!playersLoaded;
+  otherPlayers=val;
+  playersLoaded=true;
+  if(firstLoad && Object.keys(val).length===0){
+    pedsRef.remove(); pedPosRef.remove(); goonsRef.remove(); // nobody else is here, so clear leftovers
+  }
+});
   goonsRef.on('value', snap=>{ otherGoons=snap.val()||{}; });
 
   // pedestrian details (money, color) live here
@@ -287,7 +296,7 @@ document.addEventListener('keydown',e=>{
   if(e.key.toLowerCase()==='e') onInteract();
   if(e.key===' '){
     e.preventDefault();
-    bullets.push({x:player.x,y:player.y,dx:facing.dx*7,dy:facing.dy*7,owner:'player'});
+    if(e.key===' '){ e.preventDefault(); fireBullet(); }
   }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
@@ -300,7 +309,18 @@ function update(){
   if(keys['arrowdown']||keys['s']) dy=speed;
   if(keys['arrowleft']||keys['a']) dx=-speed;
   if(keys['arrowright']||keys['d']) dx=speed;
-  if(dx||dy) facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
+  if(dx||dy){
+  moveTarget=null;   // keyboard input cancels tap-to-move
+  facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
+} else if(moveTarget){
+  const d=Math.hypot(moveTarget.x-player.x, moveTarget.y-player.y);
+  if(d<=speed){ moveTarget=null; }
+  else {
+    dx=(moveTarget.x-player.x)/d*speed;
+    dy=(moveTarget.y-player.y)/d*speed;
+    facing={dx:dx/speed, dy:dy/speed};
+  }
+}
 
   let nx=Math.min(720-player.r, Math.max(player.r, player.x+dx));
   let ny=Math.min(460-player.r, Math.max(player.r, player.y+dy));
@@ -311,7 +331,7 @@ function update(){
     const inside_y = ny>b.y && ny<b.y+b.h;
     const inDoorX = nx>outside.door.x && nx<outside.door.x+outside.door.w;
     const blocked = inside_x && inside_y && !(inDoorX && ny>b.y+b.h-25);
-    if(!blocked){ player.x=nx; player.y=ny; }
+    if(!blocked){ player.x=nx; player.y=ny; } else moveTarget=null; // stop pushing against the building
   } else {
     player.x=nx; player.y=ny;
   }
