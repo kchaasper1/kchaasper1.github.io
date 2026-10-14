@@ -34,13 +34,14 @@
 <body>
 
 <h1>🏠 House Game</h1>
-
 <div id="startScreen">
   <p>Move between rooms, play the mini-game in each. Others online will appear as they walk around.</p>
   <input id="nameInput" placeholder="Your name" maxlength="16">
   <button id="startBtn">Enter the house</button>
   <div id="status"></div>
 </div>
+
+
 
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
@@ -54,6 +55,8 @@
   <button id="playCta">Play mini-game (E)</button>
 </div>
 
+
+
 <div class="modal" id="modal">
   <div class="modal-inner">
     <h2 id="modalTitle"></h2>
@@ -62,6 +65,8 @@
     <button id="closeModal">Close</button>
   </div>
 </div>
+
+
 
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
@@ -75,13 +80,20 @@ const firebaseConfig = {
 };
 /* ================================================= */
 
+
+
 let db = null, playersRef = null, myId = null, myName = "", myColor = "#e0824f";
+let pedsRef=null, pedPosRef=null, goonsRef=null;
+let playersLoaded=false, otherGoons={};
 let firebaseOk = false;
 try {
   if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
     playersRef = db.ref("housegame/players");
+    pedsRef=db.ref("housegame/peds");
+    pedPosRef=db.ref("housegame/pedpos");
+    goonsRef=db.ref("housegame/goons");
     firebaseOk = true;
   }
 } catch(e){ console.error("Firebase init failed", e); }
@@ -96,6 +108,8 @@ const playCta=document.getElementById('playCta');
 statusEl.textContent = firebaseOk
   ? "Multiplayer connected."
   : "Running solo — add your Firebase config in the file to enable multiplayer.";
+
+
 
 // ---- Rooms layout (3 side-by-side rooms) ----
 const rooms=[
@@ -112,6 +126,8 @@ const outside = {
   label:{x:360,y:30}
 };
 const insideExit = {x:30,y:230}; // walk here (inside) to step back out to the street
+
+
 
 // ---- Player state ----
 let player={x:360,y:420,r:12};
@@ -141,6 +157,8 @@ const keys={};
 let otherPlayers={};
 let currentRoom=roomAt(player.x);
 
+
+
 document.getElementById('startBtn').onclick=()=>{
   myName=document.getElementById('nameInput').value.trim() || 'Guest';
   myId='p'+Math.random().toString(36).slice(2,9);
@@ -151,16 +169,50 @@ document.getElementById('startBtn').onclick=()=>{
   requestAnimationFrame(loop);
 };
 
+
+
 function initMultiplayer(){
   if(!firebaseOk) return;
-  const myRef=playersRef.child(myId);
-  myRef.onDisconnect().remove();
+  playersRef.child(myId).onDisconnect().remove();
+  goonsRef.child(myId).onDisconnect().remove();
   updatePresence();
+
   playersRef.on('value', snap=>{
     const val=snap.val()||{};
     delete val[myId];
     otherPlayers=val;
+    playersLoaded=true;
   });
+  goonsRef.on('value', snap=>{ otherGoons=snap.val()||{}; });
+
+  // pedestrian details (money, color) live here
+  pedsRef.on('value', snap=>{
+    const val=snap.val()||{};
+    pedestrians=pedestrians.filter(p=>val[p.id]);
+    Object.keys(val).forEach(id=>{
+      const v=val[id];
+      let p=pedestrians.find(q=>q.id===id);
+      if(!p){
+        p={id,x:v.x0,y:v.y0,rx:v.x0,ry:v.y0,leaving:false};
+        pedestrians.push(p);
+      }
+      p.money=v.money; p.color=v.color; p.speed=v.speed;
+    });
+  });
+  // pedestrian positions (written by the host)
+  pedPosRef.on('value', snap=>{
+    const val=snap.val()||{};
+    pedestrians.forEach(p=>{
+      const pos=val[p.id];
+      if(pos){ p.rx=pos.x; p.ry=pos.y; }
+    });
+  });
+}
+  
+function isHost(){
+  if(!firebaseOk) return true;       // solo mode: you simulate everything
+  if(!playersLoaded) return false;
+  return Object.keys(otherPlayers).every(id=>id>myId); // lowest ID wins
 }
 
 let lastSent=0;
@@ -172,6 +224,8 @@ function updatePresence(){
   playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene});
 }
 
+
+
 // ---- Movement ----
 document.addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
@@ -182,6 +236,8 @@ document.addEventListener('keydown',e=>{
   }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+
 
 function update(){
   let dx=0,dy=0, speed=3.2;
@@ -223,11 +279,12 @@ function update(){
     });
   });
 }
+
   bullets=bullets.filter(b=>!b.dead&&b.x>0&&b.x<720&&b.y>0&&b.y<460);
   pedestrians=pedestrians.filter(p=>!p.dead);
   updatePedestrians();
   updateGoons();
-
+  
   if(scene==='outside'){
     const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
     const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
@@ -242,6 +299,8 @@ function update(){
     else playCta.style.display='none';
   }
 }
+
+
 
 function draw(){
   ctx.clearRect(0,0,720,460);
@@ -312,6 +371,8 @@ function drawAvatar(x,y,color,label){
   ctx.fillText(label, x, y-16);
 }
 
+
+
 function loop(){
   try { update(); draw(); }
   catch(err){
@@ -321,6 +382,8 @@ function loop(){
   requestAnimationFrame(loop);
 }
 
+
+
 // ---- Mini-games ----
 const modal=document.getElementById('modal');
 const modalTitle=document.getElementById('modalTitle');
@@ -328,6 +391,8 @@ const miniArea=document.getElementById('miniArea');
 const miniScore=document.getElementById('miniScore');
 document.getElementById('closeModal').onclick=closeModal;
 playCta.onclick=onInteract;
+
+
 
 let activeTimer=null;
 function onInteract(){
@@ -343,7 +408,9 @@ function onInteract(){
     if(d<40) openGame(currentRoom.game, currentRoom.name);
   }
 }
-  
+
+
+
 function enterBuilding(){ scene='inside'; player.x=50; player.y=230; }
 function exitBuilding(){ scene='outside'; player.x=360; player.y=300; }
 function closeModal(){
@@ -351,7 +418,9 @@ function closeModal(){
   if(activeTimer) clearInterval(activeTimer);
   miniArea.innerHTML='';
 }
-  
+
+
+
 function hireGoon(){
   if(money<GOON_COST){ toast('Need $'+GOON_COST+' to hire a goon'); return; }
   money-=GOON_COST;
@@ -360,8 +429,20 @@ function hireGoon(){
   goons.push({id:'g'+goonCounter, x:player.x, y:player.y, tx:player.x, ty:player.y, speed:1.2});
   toast('Hired a goon! ('+goons.length+' total)');
 }
-const SHOOT_CHANCE=0.01;     // per frame once the goon's cooldown is over
+
+const SHOOT_CHANCE=0.01;          // chance per frame once the cooldown is over
+const GOON_SHOT_COOLDOWN=6000;    // ms between shots, per goon
 const GOON_BULLET_SPEED=6;
+
+let lastGoonSync=0;
+function syncGoons(){
+  if(!firebaseOk) return;
+  const now=Date.now();
+  if(now-lastGoonSync<150) return;
+  lastGoonSync=now;
+  goonsRef.child(myId).set(goons.length ? goons.map(g=>({x:Math.round(g.x),y:Math.round(g.y)})) : null);
+}
+
 function updateGoons(){
   const now=Date.now();
   goons.forEach(g=>{
@@ -379,35 +460,33 @@ function updateGoons(){
     g.x+=Math.cos(ang)*g.speed;
     g.y+=Math.sin(ang)*g.speed;
 
-    // shoot at the target (1.5s cooldown, aim is slightly inaccurate)
     if(prey && scene==='outside' && now>=(g.nextShot||0) && Math.random()<SHOOT_CHANCE){
-      g.nextShot=now+1500;
+      g.nextShot=now+GOON_SHOT_COOLDOWN;
       const a=Math.atan2(prey.y-g.y,prey.x-g.x)+(Math.random()-0.5)*0.5;
       bullets.push({x:g.x,y:g.y,dx:Math.cos(a)*GOON_BULLET_SPEED,dy:Math.sin(a)*GOON_BULLET_SPEED,owner:'goon'});
     }
 
-    // steal attempt (2 second cooldown per goon)
     if(now<(g.nextSteal||0)) return;
     pedestrians.forEach(p=>{
       if(p.money<=0) return;
       if(Math.hypot(p.x-g.x,p.y-g.y)<16){
         g.nextSteal=now+2000;
         if(Math.random()<STEAL_CHANCE){
-          const amt=1+Math.floor(Math.random()*Math.min(3,p.money));
-          p.money-=amt;
-          money+=amt;
-          moneyDisplay.textContent='💰 $'+money;
-          toast('Goon stole $'+amt+'!');
+          stealFromPed(p, 1+Math.floor(Math.random()*Math.min(3,p.money)));
         } else {
           toast('A goon failed to steal...');
         }
       }
     });
   });
+  syncGoons();
 }
-  
 const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
+
+
+
 let pedestrians=[];
+let pedCounter=0;
 const MAX_PEDS=8;
 const LEAVE_CHANCE=0.0008;  // per frame, per pedestrian (roughly once every 20s)
 const SPAWN_CHANCE=0.004;   // per frame while below MAX_PEDS (roughly one every 4s)
@@ -415,18 +494,36 @@ const SPAWN_CHANCE=0.004;   // per frame while below MAX_PEDS (roughly one every
 function spawnPedestrian(fromEdge){
   const y=305+Math.random()*85;
   const x=fromEdge ? (Math.random()<0.5 ? -15 : 735) : 20+Math.random()*680;
-  pedestrians.push({
+  const p={
+    id:myId+'_'+(pedCounter++),
     x, y, tx:x, ty:y, leaving:false,
     speed:0.6+Math.random()*0.4,
     money:1+Math.floor(Math.random()*10),
     color:`hsl(${Math.floor(Math.random()*360)},35%,65%)`
-  });
+  };
+pedestrians.push(p);
+  if(firebaseOk) pedsRef.child(p.id).set({money:p.money,color:p.color,speed:p.speed,x0:Math.round(x),y0:Math.round(y)});
 }
-for(let i=0;i<6;i++) spawnPedestrian(false);
-  
+
+let lastPedSync=0;
+function syncPedsHost(){
+  if(!firebaseOk) return;
+  const now=Date.now();
+  if(now-lastPedSync<150) return;
+  lastPedSync=now;
+  const pos={};
+  pedestrians.forEach(p=>pos[p.id]={x:Math.round(p.x),y:Math.round(p.y)});
+  pedPosRef.set(pos);
+}  
+
 function updatePedestrians(){
+  const host=isHost();
   pedestrians.forEach(p=>{
-    // randomly decide to leave via the nearest side of the screen
+    if(!host){ // everyone else just glides toward the host's latest position
+      if(p.rx!==undefined){ p.x+=(p.rx-p.x)*0.25; p.y+=(p.ry-p.y)*0.25; }
+      return;
+    }
+    if(p.tx===undefined){ p.tx=p.x; p.ty=p.y; } // after a host handover
     if(!p.leaving && Math.random()<LEAVE_CHANCE){
       p.leaving=true;
       p.tx = p.x<360 ? -30 : 750;
@@ -439,13 +536,65 @@ function updatePedestrians(){
     const ang=Math.atan2(p.ty-p.y,p.tx-p.x);
     p.x+=Math.cos(ang)*p.speed;
     p.y+=Math.sin(ang)*p.speed;
-    if(!p.leaving && p.money<10 && Math.random()<0.001) p.money++;
-    if(p.leaving && (p.x<-20||p.x>740)) p.gone=true;
+    if(!p.leaving && p.money<10 && Math.random()<0.001){
+      if(firebaseOk) pedsRef.child(p.id+'/money').transaction(m=>m===null?m:Math.min(10,m+1));
+      else p.money++;
+    }
+    if(p.leaving && (p.x<-20||p.x>740)){
+      p.gone=true;
+      if(firebaseOk) pedsRef.child(p.id).remove();
+    }
   });
   pedestrians=pedestrians.filter(p=>!p.gone);
-  // new arrivals walk in from offscreen
-  if(pedestrians.length<MAX_PEDS && Math.random()<SPAWN_CHANCE) spawnPedestrian(true);
+  if(host){
+    const chance=pedestrians.length<4 ? 0.05 : SPAWN_CHANCE; // fill the street quickly at first
+    if(pedestrians.length<MAX_PEDS && Math.random()<chance) spawnPedestrian(true);
+    syncPedsHost();
+  }
 }
+
+// Shared kill/steal helpers: transactions make sure only one player gets the money
+function killPed(p,who){
+  if(!firebaseOk){
+    money+=p.money; pedestrians=pedestrians.filter(q=>q!==p);
+    moneyDisplay.textContent='💰 $'+money;
+    toast((who==='goon'?'A goon':'You')+' shot a pedestrian'+(p.money?' (+$'+p.money+')':''));
+    return;
+  }
+  let loot=0;
+  pedsRef.child(p.id).transaction(cur=>{
+    if(!cur) return;          // already gone, abort
+    loot=cur.money;
+    return null;              // delete it
+  },(err,committed)=>{
+    if(committed){
+      money+=loot;
+      moneyDisplay.textContent='💰 $'+money;
+      toast((who==='goon'?'A goon':'You')+' shot a pedestrian'+(loot?' (+$'+loot+')':''));
+    }
+  });
+}
+
+function stealFromPed(p,amt){
+  if(!firebaseOk){
+    const t=Math.min(amt,p.money); p.money-=t; money+=t;
+    moneyDisplay.textContent='💰 $'+money; toast('Goon stole $'+t+'!');
+    return;
+  }
+  let taken=0;
+  pedsRef.child(p.id+'/money').transaction(m=>{
+    if(m===null||m<=0) return;
+    taken=Math.min(amt,m);
+    return m-taken;
+  },(err,committed)=>{
+    if(committed && taken>0){
+      money+=taken;
+      moneyDisplay.textContent='💰 $'+money;
+      toast('Goon stole $'+taken+'!');
+    }
+  });
+}
+
 
 function openGame(type,label){
   modal.classList.add('active');
@@ -456,12 +605,15 @@ function openGame(type,label){
   if(type==='clocks') startClocks();
 }
 
+
+
 // Reflex tap — completes after 5 rounds
 function startReflex(){
   let round=0, times=[], startT=0, done=false;
   const btn=document.createElement('button');
   btn.id='reflexBtn'; btn.textContent='Wait...'; btn.style.background='#555';
   miniArea.appendChild(btn);
+  
   function nextRound(){
     if(round>=5){
       miniScore.textContent='Avg: '+Math.round(times.reduce((a,b)=>a+b,0)/times.length)+'ms — ✅ Completed! +$1';
@@ -472,6 +624,7 @@ function startReflex(){
     btn.style.background='#a33'; btn.textContent='Wait...';
     setTimeout(()=>{ btn.style.background='#2e6b5e'; btn.textContent='TAP!'; startT=Date.now(); },600+Math.random()*1200);
   }
+  
   btn.onclick=()=>{
     if(btn.textContent!=='TAP!') return;
     times.push(Date.now()-startT); round++;
@@ -480,6 +633,8 @@ function startReflex(){
   };
   nextRound();
 }
+
+
 
 // Chop — completes when target score is reached
 function startChop(){
@@ -491,6 +646,7 @@ function startChop(){
     if(!done) miniScore.textContent='Score: '+score+' / '+target+' | Time: '+timeLeft+'s';
     if(timeLeft<=0 && !done){ clearInterval(activeTimer); miniArea.innerHTML='<p style="padding-top:100px">Time up — score '+score+'/'+target+'. Try again!</p>'; }
   },1000);
+  
   const spawn=setInterval(()=>{
     if(timeLeft<=0||done){ clearInterval(spawn); return; }
     const el=document.createElement('div');
@@ -515,6 +671,8 @@ function startChop(){
   },600);
 }
 
+
+
 // Whack clocks — completes when target score is reached
 function startClocks(){
   let score=0, timeLeft=20, target=8, done=false;
@@ -528,11 +686,13 @@ function startClocks(){
     miniArea.appendChild(h);
     holes.push(h);
   }
+  
   activeTimer=setInterval(()=>{
     timeLeft--;
     if(!done) miniScore.textContent='Score: '+score+' / '+target+' | Time: '+timeLeft+'s';
     if(timeLeft<=0 && !done){ clearInterval(activeTimer); clearInterval(popper); miniArea.innerHTML='<p style="padding-top:100px">Time up — score '+score+'/'+target+'. Try again!</p>'; }
   },1000);
+  
   const popper=setInterval(()=>{
     if(timeLeft<=0||done) return;
     const h=holes[Math.floor(Math.random()*holes.length)];
