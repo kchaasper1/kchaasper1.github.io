@@ -102,6 +102,8 @@ try {
   }
 } catch(e){ console.error("Firebase init failed", e); }
 
+
+
 const startScreen=document.getElementById('startScreen');
 const statusEl=document.getElementById('status');
 const gameWrap=document.getElementById('gameWrap');
@@ -122,6 +124,8 @@ const rooms=[
   {name:'Bedroom',     x0:480, x1:720, color:'#33243a', pad:{x:600,y:230}, game:'clocks'}
 ];
 function roomAt(x){ return rooms.find(r=>x>=r.x0 && x<r.x1) || rooms[0]; }
+
+
 
 let scene = 'outside'; // 'outside' | 'inside'
 const outside = {
@@ -148,7 +152,8 @@ fireBtn.addEventListener('pointerdown',e=>{ e.preventDefault(); fireBullet(); })
 
 function canvasPoint(e){
   const r=canvas.getBoundingClientRect();
-  return {x:(e.clientX-r.left)*canvas.width/r.width, y:(e.clientY-r.top)*canvas.height/r.height};
+  return {x:(e.clientX-r.left)*canvas.width/r.width+cam.x,
+          y:(e.clientY-r.top)*canvas.height/r.height+cam.y};
 }
 
 // returns the interactive spot under a tap (door, alley, exit, mini-game pad), if any
@@ -167,8 +172,67 @@ function tappedInteractable(x,y){
 }
   
 let bullets=[];
-  
+
+const WORLD_W=2400, WORLD_H=1500;
 const alley = {x:550,y:40,w:140,h:140};
+const obstacles=[ // solid buildings
+  {x:700,y:60,w:140,h:160,color:'#a0665a',label:'HOUSE'},
+  {x:900,y:60,w:140,h:160,color:'#6a7fa0',label:'HOUSE'},
+  {x:1320,y:40,w:220,h:220,color:'#9a9a9a',label:'BANK'},
+  {x:1800,y:60,w:300,h:200,color:'#7a6a5a',label:'WAREHOUSE'},
+  {x:200,y:480,w:160,h:140,color:'#a08a5a',label:'HOUSE'},
+  {x:480,y:480,w:160,h:140,color:'#7aa06a',label:'HOUSE'},
+  {x:200,y:1150,w:150,h:130,color:'#a0665a',label:'HOUSE'},
+  {x:450,y:1150,w:150,h:130,color:'#6a7fa0',label:'HOUSE'},
+  {x:700,y:1150,w:150,h:130,color:'#a08a5a',label:'HOUSE'}
+];
+const park={x:1350,y:480,w:420,h:380};
+const lake={cx:1950,cy:1250,rx:260,ry:150};
+const roads=[
+  {x:0,y:300,w:WORLD_W,h:80},     // main road (pedestrians walk here)
+  {x:1180,y:0,w:80,h:WORLD_H},    // north-south road
+  {x:0,y:1000,w:WORLD_W,h:80}     // southern road
+];
+  
+function blockedAt(x,y){
+  const b=outside.building, r=player.r;
+  const inB = x>b.x && x<b.x+b.w && y>b.y && y<b.y+b.h;
+  const inDoorX = x>outside.door.x && x<outside.door.x+outside.door.w;
+  if(inB && !(inDoorX && y>b.y+b.h-25)) return true;
+  for(const o of obstacles)
+    if(x+r>o.x && x-r<o.x+o.w && y+r>o.y && y-r<o.y+o.h) return true;
+  const nx=(x-lake.cx)/(lake.rx+r), ny=(y-lake.cy)/(lake.ry+r);
+  return nx*nx+ny*ny<1;
+}
+
+// seeded random, so every player generates the same trees
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const trees=[];
+(function(){
+  const rng=mulberry32(12345);
+  const clear=[
+    ...roads.map(r=>({x:r.x-20,y:r.y-20,w:r.w+40,h:r.h+40})),
+    ...obstacles.map(o=>({x:o.x-25,y:o.y-25,w:o.w+50,h:o.h+50})),
+    {x:outside.building.x-30,y:outside.building.y-30,w:260,h:280},
+    {x:alley.x-20,y:alley.y-20,w:alley.w+40,h:alley.h+40}
+  ];
+  let tries=0;
+  while(trees.length<110 && tries<3000){
+    tries++;
+    const x=rng()*WORLD_W, y=rng()*WORLD_H;
+    if(((x-lake.cx)/(lake.rx+25))**2+((y-lake.cy)/(lake.ry+25))**2<1) continue;
+    if(clear.some(k=>x>k.x&&x<k.x+k.w&&y>k.y&&y<k.y+k.h)) continue;
+    trees.push({x,y,r:10+rng()*8});
+  }
+  for(let i=0;i<25;i++) trees.push({x:park.x+20+rng()*(park.w-40), y:park.y+20+rng()*(park.h-40), r:10+rng()*8});
+})();
+
+
+
+const cam={x:0,y:0};
+
+
+
 const GOON_COST = 5;
 let goons=[]; // {id,x,y,tx,ty,speed}
 let goonCounter=0;
@@ -178,6 +242,8 @@ function toast(msg){
   clearTimeout(toastEl._t);
   toastEl._t=setTimeout(()=>toastEl.textContent='',1800);
 }
+
+
 
 let pointerDown=false;
 canvas.addEventListener('pointerdown',e=>{
@@ -200,13 +266,17 @@ canvas.addEventListener('pointermove',e=>{       // dragging a finger steers
 });
 window.addEventListener('pointerup',()=>pointerDown=false);
 
+
+
 let money=5;
 const moneyDisplay=document.getElementById('moneyDisplay');
 function earnDollar(){
   money++;
   moneyDisplay.textContent='💰 $'+money;
 }
-  
+
+
+
 const keys={};
 let otherPlayers={};
 let currentRoom=roomAt(player.x);
@@ -322,24 +392,24 @@ function update(){
   }
 }
 
-  let nx=Math.min(720-player.r, Math.max(player.r, player.x+dx));
-  let ny=Math.min(460-player.r, Math.max(player.r, player.y+dy));
+const W = scene==='outside' ? WORLD_W : 720;
+const H = scene==='outside' ? WORLD_H : 460;
+let nx=Math.min(W-player.r, Math.max(player.r, player.x+dx));
+let ny=Math.min(H-player.r, Math.max(player.r, player.y+dy));
 
-  if(scene==='outside'){
-    const b=outside.building;
-    const inside_x = nx>b.x && nx<b.x+b.w;
-    const inside_y = ny>b.y && ny<b.y+b.h;
-    const inDoorX = nx>outside.door.x && nx<outside.door.x+outside.door.w;
-    const blocked = inside_x && inside_y && !(inDoorX && ny>b.y+b.h-25);
-    if(!blocked){ player.x=nx; player.y=ny; } else moveTarget=null; // stop pushing against the building
-  } else {
-    player.x=nx; player.y=ny;
-  }
+if(scene==='outside'){
+  if(!blockedAt(nx,ny)){ player.x=nx; player.y=ny; }
+  else if(!blockedAt(nx,player.y)) player.x=nx;       // slide along walls
+  else if(!blockedAt(player.x,ny)) player.y=ny;
+  else moveTarget=null;
+} else {
+  player.x=nx; player.y=ny;
+}
 
   if(scene==='inside') currentRoom=roomAt(player.x);
   updatePresence();
 
-  bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; });
+  bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; b.life=(b.life||0)+1; });
   
   if(scene==='outside'){
     bullets.forEach(b=>{
@@ -349,7 +419,8 @@ function update(){
       }
     });
   }
-  bullets=bullets.filter(b=>!b.dead&&b.x>0&&b.x<720&&b.y>0&&b.y<460);
+  const BW=scene==='outside'?WORLD_W:720, BH=scene==='outside'?WORLD_H:460;
+  bullets=bullets.filter(b=>!b.dead&&b.life<100&&b.x>0&&b.x<BW&&b.y>0&&b.y<BH);
   
   updatePedestrians();
   updateGoons();
@@ -373,18 +444,27 @@ function update(){
 
 function draw(){
   ctx.clearRect(0,0,720,460);
+  if(scene==='outside'){
+    cam.x=Math.max(0,Math.min(WORLD_W-720,player.x-360));
+    cam.y=Math.max(0,Math.min(WORLD_H-460,player.y-230));
+  } else { cam.x=0; cam.y=0; }
+
+  ctx.save();
+  ctx.translate(-cam.x,-cam.y);
   if(scene==='outside') drawOutside(); else drawInside();
 
   bullets.forEach(b=>{
-  if(b.owner==='goon' && scene!=='outside') return;
-  ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
-  ctx.fillStyle=b.owner==='goon' ? '#ff8a5c' : '#ffe066'; ctx.fill();
-});
-
+    if(b.owner==='goon' && scene!=='outside') return;
+    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
+    ctx.fillStyle=b.owner==='goon' ? '#ff8a5c' : '#ffe066'; ctx.fill();
+  });
   Object.values(otherPlayers).forEach(p=>{
     if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
   });
   drawAvatar(player.x,player.y,myColor,myName+' (you)');
+  ctx.restore();
+
+  if(scene==='outside') drawMinimap();
 }
 
 function drawGoon(x,y,label){
@@ -396,9 +476,23 @@ function drawGoon(x,y,label){
 }
 
 function drawOutside(){
-  ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,720,460); // grass/ground
-  ctx.fillStyle='#555'; ctx.fillRect(0,300,720,80); // road
-  ctx.fillStyle='#777'; ctx.fillRect(0,380,720,20); // sidewalk
+  ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,WORLD_W,WORLD_H);
+  ctx.fillStyle='#5a8a52'; ctx.fillRect(park.x,park.y,park.w,park.h);
+  ctx.fillStyle='#2f5f8f'; ctx.beginPath();
+  ctx.ellipse(lake.cx,lake.cy,lake.rx,lake.ry,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#555'; roads.forEach(r=>ctx.fillRect(r.x,r.y,r.w,r.h));
+  ctx.fillStyle='#777'; ctx.fillRect(0,380,WORLD_W,20); // sidewalk
+
+  trees.forEach(t=>{
+    ctx.fillStyle='#3b7a3b'; ctx.beginPath(); ctx.arc(t.x,t.y,t.r,0,Math.PI*2); ctx.fill();
+  });
+
+  ctx.textAlign='center'; ctx.font='12px sans-serif';
+  obstacles.forEach(o=>{
+    ctx.fillStyle=o.color; ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#fff'; ctx.fillText(o.label,o.x+o.w/2,o.y+o.h/2);
+  });
+
   const b=outside.building;
   ctx.fillStyle='#8a7054'; ctx.fillRect(b.x,b.y,b.w,b.h);
   ctx.fillStyle='#5b4a38'; ctx.fillRect(outside.door.x,outside.door.y,outside.door.w,outside.door.h+(b.y+b.h-outside.door.y));
@@ -406,7 +500,7 @@ function drawOutside(){
   ctx.fillText('SUPERMARKET', outside.label.x, outside.label.y);
 
   ctx.fillStyle='#1a1a1a'; ctx.fillRect(alley.x,alley.y,alley.w,alley.h);
-  ctx.fillStyle='#ccc'; ctx.font='13px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='#ccc'; ctx.font='13px sans-serif';
   ctx.fillText('DARK ALLEY', alley.x+alley.w/2, alley.y+20);
   ctx.font='11px sans-serif'; ctx.fillStyle='#999';
   ctx.fillText('Hire goon: $'+GOON_COST, alley.x+alley.w/2, alley.y+38);
@@ -418,14 +512,32 @@ function drawOutside(){
     ctx.fillText('$'+p.money, p.x, p.y-14);
   });
 
-  // your goons
   goons.forEach(g=>drawGoon(g.x,g.y,myName+"'s goon"));
-  // other players' goons
   Object.keys(otherGoons).forEach(oid=>{
     const owner=otherPlayers[oid];
     if(oid===myId || !owner) return;
     Object.values(otherGoons[oid]||{}).forEach(g=>drawGoon(g.x,g.y,owner.name+"'s goon"));
   });
+}
+
+function drawMinimap(){
+  const s=0.07, mx=720-WORLD_W*s-8, my=8;
+  ctx.save();
+  ctx.globalAlpha=0.85;
+  ctx.fillStyle='#2d4a2d'; ctx.fillRect(mx,my,WORLD_W*s,WORLD_H*s);
+  ctx.fillStyle='#666'; roads.forEach(r=>ctx.fillRect(mx+r.x*s,my+r.y*s,r.w*s,r.h*s));
+  ctx.fillStyle='#2f5f8f'; ctx.beginPath();
+  ctx.ellipse(mx+lake.cx*s,my+lake.cy*s,lake.rx*s,lake.ry*s,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#c9a'; obstacles.forEach(o=>ctx.fillRect(mx+o.x*s,my+o.y*s,o.w*s,o.h*s));
+  const b=outside.building;
+  ctx.fillStyle='#e8c070'; ctx.fillRect(mx+b.x*s,my+b.y*s,b.w*s,b.h*s);
+  Object.values(otherPlayers).forEach(p=>{
+    if(p.scene!=='outside') return;
+    ctx.fillStyle=p.color; ctx.fillRect(mx+p.x*s-1.5,my+p.y*s-1.5,3,3);
+  });
+  ctx.fillStyle='#fff'; ctx.fillRect(mx+player.x*s-2,my+player.y*s-2,4,4);
+  ctx.strokeStyle='#fff'; ctx.strokeRect(mx+cam.x*s,my+cam.y*s,720*s,460*s);
+  ctx.restore();
 }
 
 function drawInside(){
@@ -444,6 +556,7 @@ function drawInside(){
   ctx.fillStyle='#fff9'; ctx.font='11px sans-serif'; ctx.textAlign='center';
   ctx.fillText('exit', insideExit.x, insideExit.y+30);
 }
+
 function drawAvatar(x,y,color,label){
   ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2);
   ctx.fillStyle=color; ctx.fill();
@@ -465,6 +578,7 @@ function tick(){
   lastTick = raw>180 ? now : lastTick+steps*STEP_MS;
   for(let i=0;i<steps;i++) update();
 }
+
 function startSimulation(){
   lastTick=Date.now();
   try{
@@ -548,7 +662,8 @@ function updateGoons(){
     });
     if(prey){ g.tx=prey.x; g.ty=prey.y; }
     else if(Math.hypot(g.tx-g.x,g.ty-g.y)<4){
-      g.tx=20+Math.random()*680; g.ty=20+Math.random()*420;
+      g.tx=Math.max(20,Math.min(WORLD_W-20,g.x+(Math.random()-0.5)*500));
+      g.ty=Math.max(20,Math.min(WORLD_H-20,g.y+(Math.random()-0.5)*500));
     }
     const ang=Math.atan2(g.ty-g.y,g.tx-g.x);
     g.x+=Math.cos(ang)*g.speed;
@@ -581,13 +696,13 @@ const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
 
 let pedestrians=[];
 let pedCounter=0;
-const MAX_PEDS=8;
-const LEAVE_CHANCE=0.0008;  // per frame, per pedestrian (roughly once every 20s)
-const SPAWN_CHANCE=0.004;   // per frame while below MAX_PEDS (roughly one every 4s)
+const MAX_PEDS=20;
+const LEAVE_CHANCE=0.0003;  // per frame, per pedestrian (roughly once every 20s)
+const SPAWN_CHANCE=0.006;   // per frame while below MAX_PEDS (roughly one every 4s)
 
 function spawnPedestrian(fromEdge){
   const y=305+Math.random()*85;
-  const x=fromEdge ? (Math.random()<0.5 ? -15 : 735) : 20+Math.random()*680;
+  const x=fromEdge ? (Math.random()<0.5 ? -15 : WORLD_W+15) : 20+Math.random()*(WORLD_W-40);
   const p={
     id:myId+'_'+(pedCounter++),
     x, y, tx:x, ty:y, leaving:false,
@@ -620,11 +735,11 @@ function updatePedestrians(){
     if(p.tx===undefined){ p.tx=p.x; p.ty=p.y; } // after a host handover
     if(!p.leaving && Math.random()<LEAVE_CHANCE){
       p.leaving=true;
-      p.tx = p.x<360 ? -30 : 750;
+      p.tx = p.x<WORLD_W/2 ? -30 : WORLD_W+30;
       p.ty = p.y;
     }
     if(!p.leaving && Math.hypot(p.tx-p.x,p.ty-p.y)<4){
-      p.tx=10+Math.random()*700;
+      p.tx=10+Math.random()*(WORLD_W-20);
       p.ty=305+Math.random()*85;
     }
     const ang=Math.atan2(p.ty-p.y,p.tx-p.x);
@@ -634,14 +749,14 @@ function updatePedestrians(){
       if(firebaseOk) pedsRef.child(p.id+'/money').transaction(m=>m===null?m:Math.min(10,m+1));
       else p.money++;
     }
-    if(p.leaving && (p.x<-20||p.x>740)){
+    if(p.leaving && (p.x<-20||p.x>WORLD_W+20)){
       p.gone=true;
       if(firebaseOk) pedsRef.child(p.id).remove();
     }
   });
   pedestrians=pedestrians.filter(p=>!p.gone);
   if(host){
-    const chance=pedestrians.length<4 ? 0.05 : SPAWN_CHANCE; // fill the street quickly at first
+    const chance=pedestrians.length<10 ? 0.05 : SPAWN_CHANCE; // fill the street quickly at first
     if(pedestrians.length<MAX_PEDS && Math.random()<chance) spawnPedestrian(true);
     syncPedsHost();
   }
