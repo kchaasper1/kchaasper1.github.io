@@ -15,7 +15,6 @@
   #status{color:var(--muted);font-size:.85rem;margin-top:8px;}
   #gameWrap{display:none;flex-direction:column;align-items:center;}
   #canvas{background:#111;border-radius:10px;touch-action:none;max-width:100%;}
-  #hint{color:var(--muted);font-size:.85rem;margin-top:8px;text-align:center;}
   #playCta{display:none;margin-top:8px;}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10;}
   .modal.active{display:flex;}
@@ -27,8 +26,15 @@
   #reflexBtn{width:120px;height:120px;border-radius:50%;border:none;font-size:1rem;margin:20px auto;display:block;cursor:pointer;}
   
   #miniScore{color:var(--muted);}
-  
+
+  #hint{color:var(--muted);font-size:.85rem;margin-top:8px;text-align:center;}
   #toast{min-height:18px;color:var(--accent);font-size:.85rem;margin-top:4px;}
+
+  #infoRow{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:8px 16px;width:100%;max-width:720px;margin-top:8px;}
+  #infoRow #hint{margin-top:0;text-align:left;flex:1 1 280px;}
+  #stats{text-align:right;margin-left:auto;}
+  #moneyDisplay{font-weight:600;}
+  #expenseDisplay{color:#e66;font-size:.85rem;}
 
   button{touch-action:manipulation;}
   #fireBtn{display:none;margin-top:8px;margin-left:8px;}
@@ -49,11 +55,14 @@
 <div id="gameWrap">
   <canvas id="canvas" width="720" height="460"></canvas>
   
-  <div id="moneyDisplay">💰 $5</div>
-  
-  <div id="toast"></div>
-  
+  <div id="infoRow">
   <div id="hint">Arrow keys / WASD to move. Space to shoot.</div>
+  <div id="stats">
+    <div id="moneyDisplay">💰 $0</div>
+    <div id="expenseDisplay">Expenses: $0/min</div>
+  </div>
+</div>
+<div id="toast"></div>
   
   <button id="playCta">Play mini-game (E)</button>
   <button id="fireBtn">🔫 Fire</button>
@@ -140,6 +149,8 @@ const insideExit = {x:30,y:230}; // walk here (inside) to step back out to the s
 // ---- Player state ----
 let player={x:360,y:420,r:12};
 let facing={dx:0,dy:-1};
+const HIT_PENALTY=3;   // dollars lost per hit
+let hitUntil=0;
 
 const touchMode = window.matchMedia('(pointer: coarse)').matches; // set to true to test on desktop
 let moveTarget=null;
@@ -234,6 +245,35 @@ const cam={x:0,y:0};
 
 
 const GOON_COST = 5;
+const WAGE=1;                 // dollars per goon, per payday
+const PAY_EVERY_MS=30000;     // payday every 30 seconds
+let nextPayday=Date.now()+PAY_EVERY_MS;
+const expenseDisplay=document.getElementById('expenseDisplay');
+let lastExpenseText='';
+
+function refreshExpenses(){
+  const perMin=Math.round(goons.length*WAGE*60000/PAY_EVERY_MS*10)/10;
+  const txt='Expenses: $'+perMin+'/min';
+  if(txt!==lastExpenseText){ lastExpenseText=txt; expenseDisplay.textContent=txt; }
+}
+
+function updatePayroll(){
+  const now=Date.now();
+  if(goons.length===0){ nextPayday=now+PAY_EVERY_MS; refreshExpenses(); return; }
+  while(now>=nextPayday){
+    nextPayday+=PAY_EVERY_MS;
+    let paid=0, quit=0;
+    goons=goons.filter(g=>{
+      if(money>=WAGE){ money-=WAGE; paid+=WAGE; return true; }
+      quit++; return false;       // can't pay: this goon walks off the job
+    });
+    moneyDisplay.textContent='💰 $'+money;
+    if(quit) toast(quit+(quit>1?' goons quit':' goon quit')+" - you couldn't pay them");
+    else if(paid) toast('Paid $'+paid+' in wages');
+  }
+  refreshExpenses();
+}
+
 let goons=[]; // {id,x,y,tx,ty,speed}
 let goonCounter=0;
 const toastEl=document.getElementById('toast');
@@ -412,17 +452,28 @@ if(scene==='outside'){
   bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; b.life=(b.life||0)+1; });
   
   if(scene==='outside'){
-    bullets.forEach(b=>{
-      if(b.dead) return;
-      for(const p of pedestrians){
-        if(Math.hypot(p.x-b.x,p.y-b.y)<11){ b.dead=true; killPed(p,b.owner); break; }
-      }
-    });
-  }
+  bullets.forEach(b=>{
+    if(b.dead) return;
+    // goon bullets can hit you
+    if(b.owner==='goon' && Math.hypot(player.x-b.x,player.y-b.y)<player.r+4){
+      b.dead=true;
+      const loss=Math.min(money,HIT_PENALTY);
+      money-=loss;
+      moneyDisplay.textContent='💰 $'+money;
+      hitUntil=Date.now()+400;
+      toast('Ouch! A goon shot you'+(loss?' (-$'+loss+')':''));
+      return;
+    }
+    for(const p of pedestrians){
+      if(Math.hypot(p.x-b.x,p.y-b.y)<11){ b.dead=true; killPed(p,b.owner); break; }
+    }
+  });
+}
   const BW=scene==='outside'?WORLD_W:720, BH=scene==='outside'?WORLD_H:460;
   bullets=bullets.filter(b=>!b.dead&&b.life<100&&b.x>0&&b.x<BW&&b.y>0&&b.y<BH);
   
   updatePedestrians();
+  updatePayroll();
   updateGoons();
   
   if(scene==='outside'){
@@ -462,6 +513,10 @@ function draw(){
     if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
   });
   drawAvatar(player.x,player.y,myColor,myName+' (you)');
+  if(Date.now()<hitUntil){
+  ctx.beginPath(); ctx.arc(player.x,player.y,16,0,Math.PI*2);
+  ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+}
   ctx.restore();
 
   if(scene==='outside') drawMinimap();
@@ -638,9 +693,11 @@ function hireGoon(){
   toast('Hired a goon! ('+goons.length+' total)');
 }
 
+const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
 const SHOOT_CHANCE=0.01;          // chance per frame once the cooldown is over
 const GOON_SHOT_COOLDOWN=6000;    // ms between shots, per goon
 const GOON_BULLET_SPEED=6;
+const FOLLOW_DIST=26;   // how far behind a pedestrian a goon trails
 
 let lastGoonSync=0;
 function syncGoons(){
@@ -654,20 +711,36 @@ function syncGoons(){
 function updateGoons(){
   const now=Date.now();
   goons.forEach(g=>{
-    let prey=null, best=140;
-    pedestrians.forEach(p=>{
-      if(p.money<=0) return;
-      const d=Math.hypot(p.x-g.x,p.y-g.y);
-      if(d<best){ best=d; prey=p; }
-    });
-    if(prey){ g.tx=prey.x; g.ty=prey.y; }
-    else if(Math.hypot(g.tx-g.x,g.ty-g.y)<4){
+    // keep the current target while it's still valid, otherwise pick the closest pedestrian with money
+    let prey=pedestrians.find(p=>p.id===g.preyId && p.money>0 && Math.hypot(p.x-g.x,p.y-g.y)<220);
+    if(!prey){
+      let best=140;
+      pedestrians.forEach(p=>{
+        if(p.money<=0) return;
+        const d=Math.hypot(p.x-g.x,p.y-g.y);
+        if(d<best){ best=d; prey=p; }
+      });
+      g.preyId=prey?prey.id:null;
+    }
+
+    if(prey){
+      // aim for a spot just behind the pedestrian, relative to the way they're walking
+      const dd=Math.hypot(prey.x-g.x,prey.y-g.y)||1;
+      const hx=prey.hx!==undefined?prey.hx:(prey.x-g.x)/dd;
+      const hy=prey.hy!==undefined?prey.hy:(prey.y-g.y)/dd;
+      g.tx=prey.x-hx*FOLLOW_DIST;
+      g.ty=prey.y-hy*FOLLOW_DIST;
+    } else if(Math.hypot(g.tx-g.x,g.ty-g.y)<4){
       g.tx=Math.max(20,Math.min(WORLD_W-20,g.x+(Math.random()-0.5)*500));
       g.ty=Math.max(20,Math.min(WORLD_H-20,g.y+(Math.random()-0.5)*500));
     }
-    const ang=Math.atan2(g.ty-g.y,g.tx-g.x);
-    g.x+=Math.cos(ang)*g.speed;
-    g.y+=Math.sin(ang)*g.speed;
+
+    // move toward the target without overshooting (stops the jitter)
+    const mdx=g.tx-g.x, mdy=g.ty-g.y, md=Math.hypot(mdx,mdy);
+    if(md>0.5){
+      const step=Math.min(g.speed,md);
+      g.x+=mdx/md*step; g.y+=mdy/md*step;
+    }
 
     if(prey && scene==='outside' && now>=(g.nextShot||0) && Math.random()<SHOOT_CHANCE){
       g.nextShot=now+GOON_SHOT_COOLDOWN;
@@ -675,10 +748,11 @@ function updateGoons(){
       bullets.push({x:g.x,y:g.y,dx:Math.cos(a)*GOON_BULLET_SPEED,dy:Math.sin(a)*GOON_BULLET_SPEED,owner:'goon'});
     }
 
+    // pickpocket range is now a bit larger than the follow distance
     if(now<(g.nextSteal||0)) return;
     pedestrians.forEach(p=>{
       if(p.money<=0) return;
-      if(Math.hypot(p.x-g.x,p.y-g.y)<16){
+      if(Math.hypot(p.x-g.x,p.y-g.y)<FOLLOW_DIST+14){
         g.nextSteal=now+2000;
         if(Math.random()<STEAL_CHANCE){
           stealFromPed(p, 1+Math.floor(Math.random()*Math.min(3,p.money)));
@@ -690,7 +764,6 @@ function updateGoons(){
   });
   syncGoons();
 }
-const STEAL_CHANCE = 0.4; // 40% chance per attempt, change to taste
 
 
 
@@ -755,12 +828,26 @@ function updatePedestrians(){
     }
   });
   pedestrians=pedestrians.filter(p=>!p.gone);
+  pedestrians.forEach(trackHeading);
   if(host){
     const chance=pedestrians.length<10 ? 0.05 : SPAWN_CHANCE; // fill the street quickly at first
     if(pedestrians.length<MAX_PEDS && Math.random()<chance) spawnPedestrian(true);
     syncPedsHost();
   }
 }
+function trackHeading(p){
+  if(p.lx!==undefined){
+    const dx=p.x-p.lx, dy=p.y-p.ly, d=Math.hypot(dx,dy);
+    if(d>0.05){
+      const hx=(p.hx||0)*0.9+dx/d*0.1, hy=(p.hy||0)*0.9+dy/d*0.1;
+      const hl=Math.hypot(hx,hy)||1;
+      p.hx=hx/hl; p.hy=hy/hl;
+    }
+  }
+  p.lx=p.x; p.ly=p.y;
+}
+
+
 
 // Shared kill/steal helpers: transactions make sure only one player gets the money
 function killPed(p,who){
@@ -923,6 +1010,9 @@ function startClocks(){
     setTimeout(()=>{ if(!clicked) clock.remove(); },600);
   },750);
 }
+
+
+
 </script>
 </body>
 </html>
