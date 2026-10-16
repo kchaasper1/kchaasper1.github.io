@@ -36,6 +36,12 @@
   #moneyDisplay{font-weight:600;}
   #expenseDisplay{color:#e66;font-size:.85rem;}
 
+  #moneyRow{display:flex;gap:14px;justify-content:flex-end;}
+  #bankDisplay{font-weight:600;color:#7cc;}
+  .bank-row{display:flex;gap:8px;margin:8px 0;}
+  .bank-row input{flex:1;min-width:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:1rem;}
+  #bankMsg{color:var(--muted);min-height:20px;margin:8px 0;font-size:.9rem;}
+  
   button{touch-action:manipulation;}
   #fireBtn{display:none;margin-top:8px;margin-left:8px;}
 </style>
@@ -58,7 +64,10 @@
   <div id="infoRow">
   <div id="hint">Arrow keys / WASD to move. Space to shoot.</div>
   <div id="stats">
-    <div id="moneyDisplay">💰 $0</div>
+    <div id="moneyRow">
+      <div id="moneyDisplay">💰 $0</div>
+      <div id="bankDisplay">🏦 $0</div>
+  </div>
     <div id="expenseDisplay">Expenses: $0/min</div>
   </div>
 </div>
@@ -76,6 +85,27 @@
     <div id="miniArea"></div>
     <div id="miniScore"></div>
     <button id="closeModal">Close</button>
+  </div>
+</div>
+
+<div class="modal" id="bankModal">
+  <div class="modal-inner">
+    <h2>🏦 Bank</h2>
+    <p id="bankBalances"></p>
+    <div class="bank-row">
+      <input id="depAmt" type="number" min="1" step="1" inputmode="numeric" placeholder="Amount to deposit">
+      <button id="depositBtn">Deposit</button>
+    </div>
+    <div class="bank-row">
+      <input id="wdAmt" type="number" min="1" step="1" inputmode="numeric" placeholder="Amount to withdraw">
+      <button id="withdrawBtn">Withdraw</button>
+    </div>
+    <div class="bank-row">
+      <button id="depositAllBtn">Deposit everything</button>
+      <button id="withdrawAllBtn">Withdraw everything</button>
+    </div>
+    <p id="bankMsg"></p>
+    <button id="closeBank">Leave bank</button>
   </div>
 </div>
 
@@ -163,8 +193,10 @@ fireBtn.addEventListener('pointerdown',e=>{ e.preventDefault(); fireBullet(); })
 
 function canvasPoint(e){
   const r=canvas.getBoundingClientRect();
-  return {x:(e.clientX-r.left)*canvas.width/r.width+cam.x,
-          y:(e.clientY-r.top)*canvas.height/r.height+cam.y};
+  let x=(e.clientX-r.left)*canvas.width/r.width+cam.x;
+  let y=(e.clientY-r.top)*canvas.height/r.height+cam.y;
+  if(scene==='outside'){ x=wrapX(x); y=wrapY(y); }
+  return {x,y};
 }
 
 // returns the interactive spot under a tap (door, alley, exit, mini-game pad), if any
@@ -185,11 +217,12 @@ function tappedInteractable(x,y){
 let bullets=[];
 
 const WORLD_W=2400, WORLD_H=1500;
+const bank={x:1320,y:40,w:220,h:220};
+const bankDoor={x:1410,y:240,w:40,h:20};
 const alley = {x:550,y:40,w:140,h:140};
 const obstacles=[ // solid buildings
   {x:700,y:60,w:140,h:160,color:'#a0665a',label:'HOUSE'},
   {x:900,y:60,w:140,h:160,color:'#6a7fa0',label:'HOUSE'},
-  {x:1320,y:40,w:220,h:220,color:'#9a9a9a',label:'BANK'},
   {x:1800,y:60,w:300,h:200,color:'#7a6a5a',label:'WAREHOUSE'},
   {x:200,y:480,w:160,h:140,color:'#a08a5a',label:'HOUSE'},
   {x:480,y:480,w:160,h:140,color:'#7aa06a',label:'HOUSE'},
@@ -204,12 +237,16 @@ const roads=[
   {x:1180,y:0,w:80,h:WORLD_H},    // north-south road
   {x:0,y:1000,w:WORLD_W,h:80}     // southern road
 ];
-  
+
+function inBuildingSolid(x,y,b,door){
+  const inB=x>b.x&&x<b.x+b.w&&y>b.y&&y<b.y+b.h;
+  const inDoorX=x>door.x&&x<door.x+door.w;
+  return inB && !(inDoorX && y>b.y+b.h-25);
+}
 function blockedAt(x,y){
-  const b=outside.building, r=player.r;
-  const inB = x>b.x && x<b.x+b.w && y>b.y && y<b.y+b.h;
-  const inDoorX = x>outside.door.x && x<outside.door.x+outside.door.w;
-  if(inB && !(inDoorX && y>b.y+b.h-25)) return true;
+  const r=player.r;
+  if(inBuildingSolid(x,y,outside.building,outside.door)) return true;
+  if(inBuildingSolid(x,y,bank,bankDoor)) return true;
   for(const o of obstacles)
     if(x+r>o.x && x-r<o.x+o.w && y+r>o.y && y-r<o.y+o.h) return true;
   const nx=(x-lake.cx)/(lake.rx+r), ny=(y-lake.cy)/(lake.ry+r);
@@ -222,11 +259,12 @@ const trees=[];
 (function(){
   const rng=mulberry32(12345);
   const clear=[
-    ...roads.map(r=>({x:r.x-20,y:r.y-20,w:r.w+40,h:r.h+40})),
-    ...obstacles.map(o=>({x:o.x-25,y:o.y-25,w:o.w+50,h:o.h+50})),
-    {x:outside.building.x-30,y:outside.building.y-30,w:260,h:280},
-    {x:alley.x-20,y:alley.y-20,w:alley.w+40,h:alley.h+40}
-  ];
+  ...roads.map(r=>({x:r.x-20,y:r.y-20,w:r.w+40,h:r.h+40})),
+  ...obstacles.map(o=>({x:o.x-25,y:o.y-25,w:o.w+50,h:o.h+50})),
+  {x:outside.building.x-30,y:outside.building.y-30,w:260,h:280},
+  {x:alley.x-20,y:alley.y-20,w:alley.w+40,h:alley.h+40},
+  {x:bank.x-25,y:bank.y-25,w:bank.w+50,h:bank.h+50}
+];
   let tries=0;
   while(trees.length<110 && tries<3000){
     tries++;
@@ -241,6 +279,15 @@ const trees=[];
 
 
 const cam={x:0,y:0};
+
+
+
+function wrapX(x){ return ((x%WORLD_W)+WORLD_W)%WORLD_W; }
+function wrapY(y){ return ((y%WORLD_H)+WORLD_H)%WORLD_H; }
+// shortest signed distance from a to b across the seams
+function wdx(a,b){ let d=b-a; if(d>WORLD_W/2) d-=WORLD_W; else if(d<-WORLD_W/2) d+=WORLD_W; return d; }
+function wdy(a,b){ let d=b-a; if(d>WORLD_H/2) d-=WORLD_H; else if(d<-WORLD_H/2) d+=WORLD_H; return d; }
+function wdist(ax,ay,bx,by){ return Math.hypot(wdx(ax,bx),wdy(ay,by)); }
 
 
 
@@ -274,6 +321,17 @@ function updatePayroll(){
   refreshExpenses();
 }
 
+const INTEREST_RATE=0.02;          // 2% ...
+const INTEREST_EVERY_MS=30000;     // ... every 30 seconds
+let bankBalance=0;                        // can hold fractions, the screen shows whole dollars
+let nextInterest=Date.now()+INTEREST_EVERY_MS;
+const bankDisplay=document.getElementById('bankDisplay');
+const bankModal=document.getElementById('bankModal');
+const bankMsg=document.getElementById('bankMsg');
+const bankBalances=document.getElementById('bankBalances');
+const depAmt=document.getElementById('depAmt');
+const wdAmt=document.getElementById('wdAmt');
+
 let goons=[]; // {id,x,y,tx,ty,speed}
 let goonCounter=0;
 const toastEl=document.getElementById('toast');
@@ -282,6 +340,59 @@ function toast(msg){
   clearTimeout(toastEl._t);
   toastEl._t=setTimeout(()=>toastEl.textContent='',1800);
 }
+
+function bankWhole(){ return Math.floor(bankBalance+1e-9); }
+
+let lastHud='';
+function refreshHud(){
+  const t=money+'|'+bankWhole();
+  if(t===lastHud) return;
+  lastHud=t;
+  moneyDisplay.textContent='💰 $'+money;
+  bankDisplay.textContent='🏦 $'+bankWhole();
+  if(bankModal.classList.contains('active'))
+    bankBalances.textContent='On you: $'+money+'   |   In bank: $'+bankWhole()+'   |   Interest: '+(INTEREST_RATE*100)+'% / '+(INTEREST_EVERY_MS/1000)+'s';
+}
+
+function updateBankInterest(){
+  const now=Date.now();
+  if(bankBalance<=0){ nextInterest=now+INTEREST_EVERY_MS; return; }
+  const before=bankWhole();
+  while(now>=nextInterest){ nextInterest+=INTEREST_EVERY_MS; bankBalance*=1+INTEREST_RATE; }
+  const gain=bankWhole()-before;
+  if(gain>0) toast('Bank interest: +$'+gain);
+}
+function openBank(){
+  bankModal.classList.add('active');
+  bankMsg.textContent=''; depAmt.value=''; wdAmt.value='';
+  lastHud=''; refreshHud();
+}
+
+function bankAction(kind,all){
+  let amt = all ? (kind==='dep' ? money : bankWhole())
+                : parseInt((kind==='dep'?depAmt:wdAmt).value,10);
+  if(!Number.isFinite(amt)||amt<=0){
+    bankMsg.textContent = all ? (kind==='dep'?'You have nothing to deposit.':'You have nothing to withdraw.')
+                              : 'Enter a whole number above 0.';
+    return;
+  }
+  if(kind==='dep'){
+    if(amt>money){ bankMsg.textContent='You only have $'+money+' on you.'; return; }
+    money-=amt; bankBalance+=amt; bankMsg.textContent='Deposited $'+amt+'.';
+  } else {
+    if(amt>bankWhole()){ bankMsg.textContent='You only have $'+bankWhole()+' in the bank.'; return; }
+    bankBalance-=amt; money+=amt; bankMsg.textContent='Withdrew $'+amt+'.';
+  }
+  depAmt.value=''; wdAmt.value='';
+  refreshHud();
+}
+document.getElementById('depositBtn').onclick=()=>bankAction('dep',false);
+document.getElementById('withdrawBtn').onclick=()=>bankAction('wd',false);
+document.getElementById('depositAllBtn').onclick=()=>bankAction('dep',true);
+document.getElementById('withdrawAllBtn').onclick=()=>bankAction('wd',true);
+document.getElementById('closeBank').onclick=()=>bankModal.classList.remove('active');
+depAmt.addEventListener('keydown',e=>{ if(e.key==='Enter') bankAction('dep',false); });
+wdAmt.addEventListener('keydown',e=>{ if(e.key==='Enter') bankAction('wd',false); });
 
 
 
@@ -402,12 +513,10 @@ function updatePresence(){
 
 // ---- Movement ----
 document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT' || bankModal.classList.contains('active')) return;
   keys[e.key.toLowerCase()]=true;
   if(e.key.toLowerCase()==='e') onInteract();
-  if(e.key===' '){
-    e.preventDefault();
-    if(e.key===' '){ e.preventDefault(); fireBullet(); }
-  }
+  if(e.key===' '){ e.preventDefault(); fireBullet(); }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
 
@@ -420,66 +529,68 @@ function update(){
   if(keys['arrowleft']||keys['a']) dx=-speed;
   if(keys['arrowright']||keys['d']) dx=speed;
   if(dx||dy){
-  moveTarget=null;   // keyboard input cancels tap-to-move
-  facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
-} else if(moveTarget){
-  const d=Math.hypot(moveTarget.x-player.x, moveTarget.y-player.y);
-  if(d<=speed){ moveTarget=null; }
-  else {
-    dx=(moveTarget.x-player.x)/d*speed;
-    dy=(moveTarget.y-player.y)/d*speed;
-    facing={dx:dx/speed, dy:dy/speed};
+    moveTarget=null;
+    facing={dx: dx?Math.sign(dx):0, dy: dy?Math.sign(dy):(dx?0:facing.dy)};
+  } else if(moveTarget){
+    const tdx = scene==='outside' ? wdx(player.x,moveTarget.x) : moveTarget.x-player.x;
+    const tdy = scene==='outside' ? wdy(player.y,moveTarget.y) : moveTarget.y-player.y;
+    const d=Math.hypot(tdx,tdy);
+    if(d<=speed){ moveTarget=null; }
+    else {
+      dx=tdx/d*speed; dy=tdy/d*speed;
+      facing={dx:dx/speed, dy:dy/speed};
+    }
   }
-}
 
-const W = scene==='outside' ? WORLD_W : 720;
-const H = scene==='outside' ? WORLD_H : 460;
-let nx=Math.min(W-player.r, Math.max(player.r, player.x+dx));
-let ny=Math.min(H-player.r, Math.max(player.r, player.y+dy));
-
-if(scene==='outside'){
-  if(!blockedAt(nx,ny)){ player.x=nx; player.y=ny; }
-  else if(!blockedAt(nx,player.y)) player.x=nx;       // slide along walls
-  else if(!blockedAt(player.x,ny)) player.y=ny;
-  else moveTarget=null;
-} else {
-  player.x=nx; player.y=ny;
-}
+  if(scene==='outside'){
+    const nx=wrapX(player.x+dx), ny=wrapY(player.y+dy);
+    if(!blockedAt(nx,ny)){ player.x=nx; player.y=ny; }
+    else if(!blockedAt(nx,player.y)) player.x=nx;
+    else if(!blockedAt(player.x,ny)) player.y=ny;
+    else moveTarget=null;
+  } else {
+    player.x=Math.min(720-player.r, Math.max(player.r, player.x+dx));
+    player.y=Math.min(460-player.r, Math.max(player.r, player.y+dy));
+  }
 
   if(scene==='inside') currentRoom=roomAt(player.x);
   updatePresence();
 
-  bullets.forEach(b=>{ b.x+=b.dx; b.y+=b.dy; b.life=(b.life||0)+1; });
-  
-  if(scene==='outside'){
   bullets.forEach(b=>{
-    if(b.dead) return;
-    // goon bullets can hit you
-    if(b.owner==='goon' && Math.hypot(player.x-b.x,player.y-b.y)<player.r+4){
-      b.dead=true;
-      const loss=Math.min(money,HIT_PENALTY);
-      money-=loss;
-      moneyDisplay.textContent='💰 $'+money;
-      hitUntil=Date.now()+400;
-      toast('Ouch! A goon shot you'+(loss?' (-$'+loss+')':''));
-      return;
-    }
-    for(const p of pedestrians){
-      if(Math.hypot(p.x-b.x,p.y-b.y)<11){ b.dead=true; killPed(p,b.owner); break; }
-    }
+    b.x+=b.dx; b.y+=b.dy; b.life=(b.life||0)+1;
+    if(scene==='outside'){ b.x=wrapX(b.x); b.y=wrapY(b.y); }
   });
-}
-  const BW=scene==='outside'?WORLD_W:720, BH=scene==='outside'?WORLD_H:460;
-  bullets=bullets.filter(b=>!b.dead&&b.life<100&&b.x>0&&b.x<BW&&b.y>0&&b.y<BH);
-  
+  if(scene==='outside'){
+    bullets.forEach(b=>{
+      if(b.dead) return;
+      if(b.owner==='goon' && wdist(player.x,player.y,b.x,b.y)<player.r+4){
+        b.dead=true;
+        const loss=Math.min(money,HIT_PENALTY);   // only cash on you, never the bank
+        money-=loss;
+        hitUntil=Date.now()+400;
+        toast('Ouch! A goon shot you'+(loss?' (-$'+loss+')':''));
+        return;
+      }
+      for(const p of pedestrians){
+        if(wdist(p.x,p.y,b.x,b.y)<11){ b.dead=true; killPed(p,b.owner); break; }
+      }
+    });
+  }
+  bullets=bullets.filter(b=>!b.dead && b.life<100 &&
+    (scene==='outside' || (b.x>0&&b.x<720&&b.y>0&&b.y<460)));
+
   updatePedestrians();
   updatePayroll();
+  updateBankInterest();
   updateGoons();
-  
+  refreshHud();
+
   if(scene==='outside'){
     const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
+    const dBank=Math.hypot(player.x-(bankDoor.x+bankDoor.w/2), player.y-bankDoor.y);
     const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
     if(d<35){ playCta.textContent='Enter supermarket (E)'; playCta.style.display='inline-block'; }
+    else if(dBank<35){ playCta.textContent='Enter bank (E)'; playCta.style.display='inline-block'; }
     else if(inAlley){ playCta.textContent='Hire goon - $'+GOON_COST+' (E)'; playCta.style.display='inline-block'; }
     else playCta.style.display='none';
   } else {
@@ -492,18 +603,30 @@ if(scene==='outside'){
 }
 
 
-
 function draw(){
   ctx.clearRect(0,0,720,460);
   if(scene==='outside'){
-    cam.x=Math.max(0,Math.min(WORLD_W-720,player.x-360));
-    cam.y=Math.max(0,Math.min(WORLD_H-460,player.y-230));
-  } else { cam.x=0; cam.y=0; }
+    cam.x=player.x-360; cam.y=player.y-230;
+    const ix0=Math.floor(cam.x/WORLD_W), ix1=Math.floor((cam.x+719)/WORLD_W);
+    const iy0=Math.floor(cam.y/WORLD_H), iy1=Math.floor((cam.y+459)/WORLD_H);
+    for(let ix=ix0; ix<=ix1; ix++){
+      for(let iy=iy0; iy<=iy1; iy++){
+        ctx.save();
+        ctx.translate(ix*WORLD_W-cam.x, iy*WORLD_H-cam.y);
+        drawOutside();
+        drawEntities();
+        ctx.restore();
+      }
+    }
+    drawMinimap();
+  } else {
+    cam.x=0; cam.y=0;
+    drawInside();
+    drawEntities();
+  }
+}
 
-  ctx.save();
-  ctx.translate(-cam.x,-cam.y);
-  if(scene==='outside') drawOutside(); else drawInside();
-
+function drawEntities(){
   bullets.forEach(b=>{
     if(b.owner==='goon' && scene!=='outside') return;
     ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
@@ -514,12 +637,9 @@ function draw(){
   });
   drawAvatar(player.x,player.y,myColor,myName+' (you)');
   if(Date.now()<hitUntil){
-  ctx.beginPath(); ctx.arc(player.x,player.y,16,0,Math.PI*2);
-  ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
-}
-  ctx.restore();
-
-  if(scene==='outside') drawMinimap();
+    ctx.beginPath(); ctx.arc(player.x,player.y,16,0,Math.PI*2);
+    ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+  }
 }
 
 function drawGoon(x,y,label){
@@ -553,6 +673,10 @@ function drawOutside(){
   ctx.fillStyle='#5b4a38'; ctx.fillRect(outside.door.x,outside.door.y,outside.door.w,outside.door.h+(b.y+b.h-outside.door.y));
   ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
   ctx.fillText('SUPERMARKET', outside.label.x, outside.label.y);
+  ctx.fillStyle='#9a9a9a'; ctx.fillRect(bank.x,bank.y,bank.w,bank.h);
+  ctx.fillStyle='#5b5b6b'; ctx.fillRect(bankDoor.x,bankDoor.y,bankDoor.w,bankDoor.h);
+  ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('BANK', bank.x+bank.w/2, bank.y+bank.h/2-40);
 
   ctx.fillStyle='#1a1a1a'; ctx.fillRect(alley.x,alley.y,alley.w,alley.h);
   ctx.fillStyle='#ccc'; ctx.font='13px sans-serif';
@@ -586,12 +710,17 @@ function drawMinimap(){
   ctx.fillStyle='#c9a'; obstacles.forEach(o=>ctx.fillRect(mx+o.x*s,my+o.y*s,o.w*s,o.h*s));
   const b=outside.building;
   ctx.fillStyle='#e8c070'; ctx.fillRect(mx+b.x*s,my+b.y*s,b.w*s,b.h*s);
+  ctx.fillStyle='#bbb'; ctx.fillRect(mx+bank.x*s,my+bank.y*s,bank.w*s,bank.h*s);
   Object.values(otherPlayers).forEach(p=>{
     if(p.scene!=='outside') return;
     ctx.fillStyle=p.color; ctx.fillRect(mx+p.x*s-1.5,my+p.y*s-1.5,3,3);
   });
   ctx.fillStyle='#fff'; ctx.fillRect(mx+player.x*s-2,my+player.y*s-2,4,4);
-  ctx.strokeStyle='#fff'; ctx.strokeRect(mx+cam.x*s,my+cam.y*s,720*s,460*s);
+  ctx.beginPath(); ctx.rect(mx,my,WORLD_W*s,WORLD_H*s); ctx.clip();
+const vx=wrapX(cam.x), vy=wrapY(cam.y);
+ctx.strokeStyle='#fff';
+for(const ox of [-WORLD_W,0]) for(const oy of [-WORLD_H,0])
+  ctx.strokeRect(mx+(vx+ox)*s,my+(vy+oy)*s,720*s,460*s);
   ctx.restore();
 }
 
@@ -662,6 +791,8 @@ function onInteract(){
   if(scene==='outside'){
     const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
     if(d<35){ enterBuilding(); return; }
+    const dBank=Math.hypot(player.x-(bankDoor.x+bankDoor.w/2), player.y-bankDoor.y);
+    if(dBank<35){ openBank(); return; }
     const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
     if(inAlley) hireGoon();
   } else {
@@ -711,48 +842,44 @@ function syncGoons(){
 function updateGoons(){
   const now=Date.now();
   goons.forEach(g=>{
-    // keep the current target while it's still valid, otherwise pick the closest pedestrian with money
-    let prey=pedestrians.find(p=>p.id===g.preyId && p.money>0 && Math.hypot(p.x-g.x,p.y-g.y)<220);
+    let prey=pedestrians.find(p=>p.id===g.preyId && p.money>0 && wdist(p.x,p.y,g.x,g.y)<220);
     if(!prey){
       let best=140;
       pedestrians.forEach(p=>{
         if(p.money<=0) return;
-        const d=Math.hypot(p.x-g.x,p.y-g.y);
+        const d=wdist(p.x,p.y,g.x,g.y);
         if(d<best){ best=d; prey=p; }
       });
       g.preyId=prey?prey.id:null;
     }
 
     if(prey){
-      // aim for a spot just behind the pedestrian, relative to the way they're walking
-      const dd=Math.hypot(prey.x-g.x,prey.y-g.y)||1;
-      const hx=prey.hx!==undefined?prey.hx:(prey.x-g.x)/dd;
-      const hy=prey.hy!==undefined?prey.hy:(prey.y-g.y)/dd;
-      g.tx=prey.x-hx*FOLLOW_DIST;
-      g.ty=prey.y-hy*FOLLOW_DIST;
-    } else if(Math.hypot(g.tx-g.x,g.ty-g.y)<4){
-      g.tx=Math.max(20,Math.min(WORLD_W-20,g.x+(Math.random()-0.5)*500));
-      g.ty=Math.max(20,Math.min(WORLD_H-20,g.y+(Math.random()-0.5)*500));
+      const ddx=wdx(g.x,prey.x), ddy=wdy(g.y,prey.y), dd=Math.hypot(ddx,ddy)||1;
+      const hx=prey.hx!==undefined?prey.hx:ddx/dd;
+      const hy=prey.hy!==undefined?prey.hy:ddy/dd;
+      g.tx=wrapX(prey.x-hx*FOLLOW_DIST);
+      g.ty=wrapY(prey.y-hy*FOLLOW_DIST);
+    } else if(wdist(g.x,g.y,g.tx,g.ty)<4){
+      g.tx=wrapX(g.x+(Math.random()-0.5)*500);
+      g.ty=wrapY(g.y+(Math.random()-0.5)*500);
     }
 
-    // move toward the target without overshooting (stops the jitter)
-    const mdx=g.tx-g.x, mdy=g.ty-g.y, md=Math.hypot(mdx,mdy);
+    const mdx=wdx(g.x,g.tx), mdy=wdy(g.y,g.ty), md=Math.hypot(mdx,mdy);
     if(md>0.5){
       const step=Math.min(g.speed,md);
-      g.x+=mdx/md*step; g.y+=mdy/md*step;
+      g.x=wrapX(g.x+mdx/md*step); g.y=wrapY(g.y+mdy/md*step);
     }
 
     if(prey && scene==='outside' && now>=(g.nextShot||0) && Math.random()<SHOOT_CHANCE){
       g.nextShot=now+GOON_SHOT_COOLDOWN;
-      const a=Math.atan2(prey.y-g.y,prey.x-g.x)+(Math.random()-0.5)*0.5;
+      const a=Math.atan2(wdy(g.y,prey.y),wdx(g.x,prey.x))+(Math.random()-0.5)*0.5;
       bullets.push({x:g.x,y:g.y,dx:Math.cos(a)*GOON_BULLET_SPEED,dy:Math.sin(a)*GOON_BULLET_SPEED,owner:'goon'});
     }
 
-    // pickpocket range is now a bit larger than the follow distance
     if(now<(g.nextSteal||0)) return;
     pedestrians.forEach(p=>{
       if(p.money<=0) return;
-      if(Math.hypot(p.x-g.x,p.y-g.y)<FOLLOW_DIST+14){
+      if(wdist(p.x,p.y,g.x,g.y)<FOLLOW_DIST+14){
         g.nextSteal=now+2000;
         if(Math.random()<STEAL_CHANCE){
           stealFromPed(p, 1+Math.floor(Math.random()*Math.min(3,p.money)));
