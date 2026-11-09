@@ -35,7 +35,6 @@
   #stats{text-align:right;margin-left:auto;}
   #moneyDisplay{font-weight:600;}
   #expenseDisplay{color:#e66;font-size:.85rem;}
-  #<div id="mineralDisplay">⛏️ Iron 0 · Copper 0 · Gold 0</div>
 
   #moneyRow{display:flex;gap:14px;justify-content:flex-end;}
   #bankDisplay{font-weight:600;color:#7cc;}
@@ -74,6 +73,7 @@
       <div id="bankDisplay">🏦 $0</div>
   </div>
     <div id="expenseDisplay">Expenses: $0/min</div>
+    <div id="mineralDisplay">⛏️ Iron 0 · Copper 0 · Gold 0</div>
   </div>
 </div>
 <div id="toast"></div>
@@ -269,7 +269,7 @@ const roads=[
   {x:0,y:300,w:WORLD_W,h:80},     // main road (pedestrians walk here)
   {x:1180,y:0,w:80,h:WORLD_H},    // north-south road
   {x:2480,y:0,w:80,h:WORLD_H},    // second north-south road
-  {x:0,y:1000,w:WORLD_W,h:80}     // southern road
+  {x:0,y:1000,w:WORLD_W,h:80},     // southern road
   {x:0,y:1700,w:WORLD_W,h:80}     // far southern road
 ];
 
