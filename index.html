@@ -35,12 +35,17 @@
   #stats{text-align:right;margin-left:auto;}
   #moneyDisplay{font-weight:600;}
   #expenseDisplay{color:#e66;font-size:.85rem;}
+  #<div id="mineralDisplay">⛏️ Iron 0 · Copper 0 · Gold 0</div>
 
   #moneyRow{display:flex;gap:14px;justify-content:flex-end;}
   #bankDisplay{font-weight:600;color:#7cc;}
   .bank-row{display:flex;gap:8px;margin:8px 0;}
   .bank-row input{flex:1;min-width:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:1rem;}
   #bankMsg{color:var(--muted);min-height:20px;margin:8px 0;font-size:.9rem;}
+
+  #mineralDisplay{color:#cba;font-size:.85rem;}
+  #garageList{margin:10px 0;color:var(--muted);}
+  .bank-row span{flex:1;text-align:left;font-size:.9rem;}
   
   button{touch-action:manipulation;}
   #fireBtn{display:none;margin-top:8px;margin-left:8px;}
@@ -106,6 +111,17 @@
     </div>
     <p id="bankMsg"></p>
     <button id="closeBank">Leave bank</button>
+  </div>
+</div>
+
+
+
+<div class="modal" id="garageModal">
+  <div class="modal-inner">
+    <h2>🔧 Garage</h2>
+    <p id="garageMinerals"></p>
+    <div id="garageList"></div>
+    <button id="closeGarage">Leave garage</button>
   </div>
 </div>
 
@@ -202,10 +218,18 @@ function canvasPoint(e){
 // returns the interactive spot under a tap (door, alley, exit, mini-game pad), if any
 function tappedInteractable(x,y){
   if(scene==='outside'){
-    const dx0=outside.door.x+outside.door.w/2, dy0=outside.door.y;
-    if(Math.hypot(x-dx0,y-dy0)<40) return {x:dx0,y:dy0,r:35};
+    const doors=[
+      {x:outside.door.x+outside.door.w/2,y:outside.door.y},
+      {x:bankDoor.x+bankDoor.w/2,y:bankDoor.y},
+      ...enterables.map(en=>({x:en.door.x+en.door.w/2,y:en.door.y}))
+    ];
+    for(const d of doors) if(Math.hypot(x-d.x,y-d.y)<40) return {x:d.x,y:d.y,r:35};
     if(x>alley.x&&x<alley.x+alley.w&&y>alley.y&&y<alley.y+alley.h)
       return {x:alley.x+alley.w/2,y:alley.y+alley.h/2,r:70};
+  } else if(scene==='mine'){
+    if(Math.hypot(x-mineExit.x,y-mineExit.y)<40) return {x:mineExit.x,y:mineExit.y,r:35};
+    for(const n of mineNodes)
+      if(n.hp>0 && Math.hypot(x-n.x,y-n.y)<28) return {x:n.x,y:n.y,r:34};
   } else {
     if(Math.hypot(x-insideExit.x,y-insideExit.y)<40) return {x:insideExit.x,y:insideExit.y,r:35};
     for(const r of rooms)
@@ -216,10 +240,11 @@ function tappedInteractable(x,y){
   
 let bullets=[];
 
-const WORLD_W=2400, WORLD_H=1500;
+const WORLD_W=3200, WORLD_H=2400;
 const bank={x:1320,y:40,w:220,h:220};
 const bankDoor={x:1410,y:240,w:40,h:20};
 const alley = {x:550,y:40,w:140,h:140};
+const church={x:1460,y:1130,w:200,h:180,color:'#c9c2b0',label:'CHURCH'};
 const obstacles=[ // solid buildings
   {x:700,y:60,w:140,h:160,color:'#a0665a',label:'HOUSE'},
   {x:900,y:60,w:140,h:160,color:'#6a7fa0',label:'HOUSE'},
@@ -228,14 +253,24 @@ const obstacles=[ // solid buildings
   {x:480,y:480,w:160,h:140,color:'#7aa06a',label:'HOUSE'},
   {x:200,y:1150,w:150,h:130,color:'#a0665a',label:'HOUSE'},
   {x:450,y:1150,w:150,h:130,color:'#6a7fa0',label:'HOUSE'},
-  {x:700,y:1150,w:150,h:130,color:'#a08a5a',label:'HOUSE'}
+  {x:700,y:1150,w:150,h:130,color:'#a08a5a',label:'HOUSE'},
+  church,
+  {x:780,y:450,w:190,h:90,color:'#8a8f98',label:'SHOP'},
+  {x:990,y:450,w:170,h:90,color:'#a39a8a',label:'OFFICE'}
 ];
 const park={x:1350,y:480,w:420,h:380};
 const lake={cx:1950,cy:1250,rx:260,ry:150};
+const mineSite={key:'mine',label:'MINE',prompt:'Enter the mine (E)',color:'#6b6560',
+  b:{x:2640,y:480,w:260,h:190}, door:{x:2740,y:650,w:40,h:20}};
+const garage={key:'garage',label:'GARAGE',prompt:'Enter garage (E)',color:'#7a7f86',
+  b:{x:2180,y:480,w:220,h:170}, door:{x:2270,y:630,w:40,h:20}};
+const enterables=[mineSite,garage];
 const roads=[
   {x:0,y:300,w:WORLD_W,h:80},     // main road (pedestrians walk here)
   {x:1180,y:0,w:80,h:WORLD_H},    // north-south road
+  {x:2480,y:0,w:80,h:WORLD_H},    // second north-south road
   {x:0,y:1000,w:WORLD_W,h:80}     // southern road
+  {x:0,y:1700,w:WORLD_W,h:80}     // far southern road
 ];
 
 function inBuildingSolid(x,y,b,door){
@@ -247,6 +282,7 @@ function blockedAt(x,y){
   const r=player.r;
   if(inBuildingSolid(x,y,outside.building,outside.door)) return true;
   if(inBuildingSolid(x,y,bank,bankDoor)) return true;
+  for(const en of enterables) if(inBuildingSolid(x,y,en.b,en.door)) return true;
   for(const o of obstacles)
     if(x+r>o.x && x-r<o.x+o.w && y+r>o.y && y-r<o.y+o.h) return true;
   const nx=(x-lake.cx)/(lake.rx+r), ny=(y-lake.cy)/(lake.ry+r);
@@ -259,14 +295,15 @@ const trees=[];
 (function(){
   const rng=mulberry32(12345);
   const clear=[
-  ...roads.map(r=>({x:r.x-20,y:r.y-20,w:r.w+40,h:r.h+40})),
-  ...obstacles.map(o=>({x:o.x-25,y:o.y-25,w:o.w+50,h:o.h+50})),
-  {x:outside.building.x-30,y:outside.building.y-30,w:260,h:280},
-  {x:alley.x-20,y:alley.y-20,w:alley.w+40,h:alley.h+40},
-  {x:bank.x-25,y:bank.y-25,w:bank.w+50,h:bank.h+50}
-];
+    ...roads.map(r=>({x:r.x-20,y:r.y-20,w:r.w+40,h:r.h+40})),
+    ...obstacles.map(o=>({x:o.x-25,y:o.y-25,w:o.w+50,h:o.h+50})),
+    ...enterables.map(e=>({x:e.b.x-25,y:e.b.y-25,w:e.b.w+50,h:e.b.h+50})),
+    {x:outside.building.x-30,y:outside.building.y-30,w:260,h:280},
+    {x:alley.x-20,y:alley.y-20,w:alley.w+40,h:alley.h+40},
+    {x:bank.x-25,y:bank.y-25,w:bank.w+50,h:bank.h+50}
+  ];
   let tries=0;
-  while(trees.length<110 && tries<3000){
+  while(trees.length<170 && tries<6000){
     tries++;
     const x=rng()*WORLD_W, y=rng()*WORLD_H;
     if(((x-lake.cx)/(lake.rx+25))**2+((y-lake.cy)/(lake.ry+25))**2<1) continue;
@@ -341,18 +378,27 @@ function toast(msg){
   toastEl._t=setTimeout(()=>toastEl.textContent='',1800);
 }
 
+
+
 function bankWhole(){ return Math.floor(bankBalance+1e-9); }
 
+
+
 let lastHud='';
+const mineralDisplay=document.getElementById('mineralDisplay');
 function refreshHud(){
-  const t=money+'|'+bankWhole();
+  const t=money+'|'+bankWhole()+'|'+minerals.iron+'|'+minerals.copper+'|'+minerals.gold;
   if(t===lastHud) return;
   lastHud=t;
   moneyDisplay.textContent='💰 $'+money;
   bankDisplay.textContent='🏦 $'+bankWhole();
+  mineralDisplay.textContent='⛏️ Iron '+minerals.iron+' · Copper '+minerals.copper+' · Gold '+minerals.gold;
   if(bankModal.classList.contains('active'))
     bankBalances.textContent='On you: $'+money+'   |   In bank: $'+bankWhole()+'   |   Interest: '+(INTEREST_RATE*100)+'% / '+(INTEREST_EVERY_MS/1000)+'s';
+  if(garageModal.classList.contains('active')) renderGarage();
 }
+
+
 
 function updateBankInterest(){
   const now=Date.now();
@@ -393,6 +439,84 @@ document.getElementById('withdrawAllBtn').onclick=()=>bankAction('wd',true);
 document.getElementById('closeBank').onclick=()=>bankModal.classList.remove('active');
 depAmt.addEventListener('keydown',e=>{ if(e.key==='Enter') bankAction('dep',false); });
 wdAmt.addEventListener('keydown',e=>{ if(e.key==='Enter') bankAction('wd',false); });
+
+
+
+const ORE_COLORS={iron:'#aab0b8',copper:'#d08a50',gold:'#ffd34d'};
+const minerals={iron:0,copper:0,gold:0};
+const mineExit={x:30,y:230};
+const mineNodes=[[150,100],[300,80],[450,120],[600,90],[200,230],[380,260],[560,240],[130,370],[320,380],[520,360],[650,330],[440,200]]
+  .map(([x,y])=>{
+    const r=Math.random();
+    return {x,y,type:r<0.55?'iron':r<0.85?'copper':'gold',hp:3,respawnAt:0};
+  });
+
+function nearestOre(){
+  let best=null, bd=34;
+  mineNodes.forEach(n=>{
+    if(n.hp<=0) return;
+    const d=Math.hypot(n.x-player.x,n.y-player.y);
+    if(d<bd){ bd=d; best=n; }
+  });
+  return best;
+}
+
+function mineOre(){
+  const n=nearestOre();
+  if(!n) return;
+  n.hp--;
+  if(n.hp<=0){
+    minerals[n.type]++;
+    n.respawnAt=Date.now()+20000;      // ore grows back after 20s
+    toast('Mined '+n.type+'!');
+  } else toast('Chip! '+n.hp+' more');
+}
+
+function updateMineNodes(){
+  const now=Date.now();
+  mineNodes.forEach(n=>{ if(n.hp<=0 && now>=n.respawnAt) n.hp=3; });
+}
+
+function enterMine(){ scene='mine'; player.x=60; player.y=230; moveTarget=null; }
+
+function exitMine(){
+  scene='outside';
+  player.x=mineSite.door.x+mineSite.door.w/2;
+  player.y=mineSite.door.y+60;
+  moveTarget=null;
+}
+
+// ---- Garage ----
+// Nothing buildable yet. Later, add entries like:
+// {name:'Something', cost:{iron:10,copper:5}, onBuild:()=>{ ... }}
+const buildables=[];
+const garageModal=document.getElementById('garageModal');
+const garageMinerals=document.getElementById('garageMinerals');
+const garageList=document.getElementById('garageList');
+function renderGarage(){
+  garageMinerals.textContent='Iron '+minerals.iron+'  ·  Copper '+minerals.copper+'  ·  Gold '+minerals.gold;
+  garageList.innerHTML='';
+  if(!buildables.length){ garageList.textContent='Nothing to build yet.'; return; }
+  buildables.forEach(item=>{
+    const row=document.createElement('div'); row.className='bank-row';
+    const label=document.createElement('span');
+    label.textContent=item.name+' ('+Object.entries(item.cost).map(([k,v])=>v+' '+k).join(', ')+')';
+    const btn=document.createElement('button'); btn.textContent='Build';
+    const canBuild=()=>Object.entries(item.cost).every(([k,v])=>minerals[k]>=v);
+    btn.disabled=!canBuild();
+    btn.onclick=()=>{
+      if(!canBuild()) return;
+      Object.entries(item.cost).forEach(([k,v])=>minerals[k]-=v);
+      if(item.onBuild) item.onBuild();
+      toast('Built '+item.name);
+      lastHud=''; refreshHud(); renderGarage();
+    };
+    row.append(label,btn);
+    garageList.appendChild(row);
+  });
+}
+function openGarage(){ garageModal.classList.add('active'); renderGarage(); }
+document.getElementById('closeGarage').onclick=()=>garageModal.classList.remove('active');
 
 
 
@@ -513,9 +637,9 @@ function updatePresence(){
 
 // ---- Movement ----
 document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT' || bankModal.classList.contains('active')) return;
+  if(e.target.tagName==='INPUT' || document.querySelector('.modal.active')) return;
   keys[e.key.toLowerCase()]=true;
-  if(e.key.toLowerCase()==='e') onInteract();
+  if(e.key.toLowerCase()==='e' && !e.repeat) onInteract();
   if(e.key===' '){ e.preventDefault(); fireBullet(); }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
@@ -582,25 +706,33 @@ function update(){
   updatePedestrians();
   updatePayroll();
   updateBankInterest();
+  updateMineNodes();
   updateGoons();
   refreshHud();
 
-  if(scene==='outside'){
-    const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
-    const dBank=Math.hypot(player.x-(bankDoor.x+bankDoor.w/2), player.y-bankDoor.y);
-    const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
-    if(d<35){ playCta.textContent='Enter supermarket (E)'; playCta.style.display='inline-block'; }
-    else if(dBank<35){ playCta.textContent='Enter bank (E)'; playCta.style.display='inline-block'; }
-    else if(inAlley){ playCta.textContent='Hire goon - $'+GOON_COST+' (E)'; playCta.style.display='inline-block'; }
-    else playCta.style.display='none';
-  } else {
-    const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
-    const dPad=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
-    if(dExit<35){ playCta.textContent='Exit to street (E)'; playCta.style.display='inline-block'; }
-    else if(dPad<40){ playCta.textContent='Play mini-game (E)'; playCta.style.display='inline-block'; }
-    else playCta.style.display='none';
+const near=(x,y,r)=>Math.hypot(player.x-x,player.y-y)<r;
+let cta=null;
+if(scene==='outside'){
+  if(near(outside.door.x+outside.door.w/2,outside.door.y,35)) cta='Enter supermarket (E)';
+  else if(near(bankDoor.x+bankDoor.w/2,bankDoor.y,35)) cta='Enter bank (E)';
+  else {
+    for(const en of enterables)
+      if(near(en.door.x+en.door.w/2,en.door.y,35)){ cta=en.prompt; break; }
+    if(!cta && player.x>alley.x&&player.x<alley.x+alley.w&&player.y>alley.y&&player.y<alley.y+alley.h)
+      cta='Hire goon - $'+GOON_COST+' (E)';
   }
+} else if(scene==='mine'){
+  if(near(mineExit.x,mineExit.y,35)) cta='Exit mine (E)';
+  else if(nearestOre()) cta='Mine (E)';
+} else {
+  const dPad=Math.hypot(player.x-currentRoom.pad.x,player.y-currentRoom.pad.y);
+  if(near(insideExit.x,insideExit.y,35)) cta='Exit to street (E)';
+  else if(dPad<40) cta='Play mini-game (E)';
 }
+if(cta) playCta.textContent=cta;
+playCta.style.display=cta?'inline-block':'none';
+}
+
 
 
 function draw(){
@@ -621,7 +753,7 @@ function draw(){
     drawMinimap();
   } else {
     cam.x=0; cam.y=0;
-    drawInside();
+    if(scene==='mine') drawMine(); else drawInside();
     drawEntities();
   }
 }
@@ -678,6 +810,19 @@ function drawOutside(){
   ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
   ctx.fillText('BANK', bank.x+bank.w/2, bank.y+bank.h/2-40);
 
+  enterables.forEach(en=>{
+  const b=en.b, d=en.door;
+  ctx.fillStyle=en.color; ctx.fillRect(b.x,b.y,b.w,b.h);
+  ctx.fillStyle='#2a2623'; ctx.fillRect(d.x,d.y,d.w,d.h);
+  ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(en.label,b.x+b.w/2,b.y+b.h/2-20);
+  });
+  
+  // cross on the church
+  ctx.fillStyle='#fff';
+  ctx.fillRect(church.x+church.w/2-5,church.y+14,10,50);
+  ctx.fillRect(church.x+church.w/2-16,church.y+27,32,10);
+
   ctx.fillStyle='#1a1a1a'; ctx.fillRect(alley.x,alley.y,alley.w,alley.h);
   ctx.fillStyle='#ccc'; ctx.font='13px sans-serif';
   ctx.fillText('DARK ALLEY', alley.x+alley.w/2, alley.y+20);
@@ -700,7 +845,7 @@ function drawOutside(){
 }
 
 function drawMinimap(){
-  const s=0.07, mx=720-WORLD_W*s-8, my=8;
+  const s=0.06, mx=720-WORLD_W*s-8, my=8;
   ctx.save();
   ctx.globalAlpha=0.85;
   ctx.fillStyle='#2d4a2d'; ctx.fillRect(mx,my,WORLD_W*s,WORLD_H*s);
@@ -711,6 +856,7 @@ function drawMinimap(){
   const b=outside.building;
   ctx.fillStyle='#e8c070'; ctx.fillRect(mx+b.x*s,my+b.y*s,b.w*s,b.h*s);
   ctx.fillStyle='#bbb'; ctx.fillRect(mx+bank.x*s,my+bank.y*s,bank.w*s,bank.h*s);
+  enterables.forEach(en=>{ ctx.fillStyle=en.color; ctx.fillRect(mx+en.b.x*s,my+en.b.y*s,en.b.w*s,en.b.h*s); });
   Object.values(otherPlayers).forEach(p=>{
     if(p.scene!=='outside') return;
     ctx.fillStyle=p.color; ctx.fillRect(mx+p.x*s-1.5,my+p.y*s-1.5,3,3);
@@ -748,7 +894,24 @@ function drawAvatar(x,y,color,label){
   ctx.fillText(label, x, y-16);
 }
 
+function drawMine(){
+  ctx.fillStyle='#1d1b1a'; ctx.fillRect(0,0,720,460);
+  ctx.fillStyle='#fff9'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('THE MINE',360,24);
+  ctx.fillStyle='#4fae8f'; ctx.fillRect(mineExit.x-10,mineExit.y-16,20,32);
+  ctx.fillStyle='#fff9'; ctx.font='11px sans-serif';
+  ctx.fillText('exit',mineExit.x,mineExit.y+30);
+  mineNodes.forEach(n=>{
+    if(n.hp<=0) return;
+    ctx.beginPath(); ctx.arc(n.x,n.y,14,0,Math.PI*2);
+    ctx.fillStyle=ORE_COLORS[n.type]; ctx.fill();
+    ctx.strokeStyle='#0008'; ctx.stroke();
+    ctx.fillStyle='#fffc'; ctx.font='10px sans-serif';
+    ctx.fillText(n.type+(n.hp<3?' '+'●'.repeat(n.hp):''),n.x,n.y-19);
+  });
+}
 
+ 
 
 function loop(){ draw(); requestAnimationFrame(loop); }
 
@@ -789,15 +952,21 @@ playCta.onclick=onInteract;
 let activeTimer=null;
 function onInteract(){
   if(scene==='outside'){
-    const d=Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y);
-    if(d<35){ enterBuilding(); return; }
-    const dBank=Math.hypot(player.x-(bankDoor.x+bankDoor.w/2), player.y-bankDoor.y);
-    if(dBank<35){ openBank(); return; }
+    if(Math.hypot(player.x-(outside.door.x+outside.door.w/2), player.y-outside.door.y)<35){ enterBuilding(); return; }
+    if(Math.hypot(player.x-(bankDoor.x+bankDoor.w/2), player.y-bankDoor.y)<35){ openBank(); return; }
+    for(const en of enterables){
+      if(Math.hypot(player.x-(en.door.x+en.door.w/2), player.y-en.door.y)<35){
+        if(en.key==='mine') enterMine(); else openGarage();
+        return;
+      }
+    }
     const inAlley = player.x>alley.x && player.x<alley.x+alley.w && player.y>alley.y && player.y<alley.y+alley.h;
     if(inAlley) hireGoon();
+  } else if(scene==='mine'){
+    if(Math.hypot(player.x-mineExit.x,player.y-mineExit.y)<35){ exitMine(); return; }
+    mineOre();
   } else {
-    const dExit=Math.hypot(player.x-insideExit.x, player.y-insideExit.y);
-    if(dExit<35){ exitBuilding(); return; }
+    if(Math.hypot(player.x-insideExit.x,player.y-insideExit.y)<35){ exitBuilding(); return; }
     const d=Math.hypot(player.x-currentRoom.pad.x, player.y-currentRoom.pad.y);
     if(d<40) openGame(currentRoom.game, currentRoom.name);
   }
