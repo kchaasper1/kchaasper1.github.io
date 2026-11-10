@@ -153,6 +153,17 @@ let db = null, playersRef = null, myId = null, myName = "", myColor = "#e0824f";
 let pedsRef=null, pedPosRef=null, goonsRef=null;
 let playersLoaded=false, otherGoons={};
 let fbFailed=false;
+let fbErrors=0;
+function noteFbError(err){
+  console.error('Firebase error:', err && err.message ? err.message : err);
+  fbErrors++;
+  if(fbErrors>=3 && !fbFailed){
+    fbFailed=true;
+    toast('Database is rejecting writes - running solo. Check your Firebase rules.');
+  }
+}
+function fbGuard(p){ if(p && p.catch) p.catch(noteFbError); }
+
 const lastSeen={};
 let firebaseOk = false;
 try {
@@ -634,6 +645,7 @@ function initMultiplayer(){
 
   // pedestrian details (money, color) live here
   pedsRef.on('value', snap=>{
+    if(fbFailed) return;
     const val=snap.val()||{};
     pedestrians=pedestrians.filter(p=>val[p.id]);
     Object.keys(val).forEach(id=>{
@@ -649,6 +661,7 @@ function initMultiplayer(){
   });
   // pedestrian positions (written by the host)
   pedPosRef.on('value', snap=>{
+    if(fbFailed) return;
     const val=snap.val()||{};
     pedestrians.forEach(p=>{
       const pos=val[p.id];
@@ -670,11 +683,11 @@ function isHost(){
 
 let lastSent=0;
 function updatePresence(){
-  if(!firebaseOk) return;
+  if(!firebaseOk||fbFailed) return;
   const now=Date.now();
   if(now-lastSent<120) return;
   lastSent=now;
-  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene,ts:now});
+  fbGuard(playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene,ts:now}));
 }
 
 
@@ -1063,11 +1076,11 @@ const FOLLOW_DIST=26;   // how far behind a pedestrian a goon trails
 
 let lastGoonSync=0;
 function syncGoons(){
-  if(!firebaseOk) return;
+  if(!firebaseOk||fbFailed) return;
   const now=Date.now();
   if(now-lastGoonSync<150) return;
   lastGoonSync=now;
-  goonsRef.child(myId).set(goons.length ? goons.map(g=>({x:Math.round(g.x),y:Math.round(g.y)})) : null);
+  fbGuard(goonsRef.child(myId).set(goons.length ? goons.map(g=>({x:Math.round(g.x),y:Math.round(g.y)})) : null));
 }
 
 function updateGoons(){
@@ -1142,18 +1155,18 @@ function spawnPedestrian(fromEdge){
     color:`hsl(${Math.floor(Math.random()*360)},35%,65%)`
   };
 pedestrians.push(p);
-  if(firebaseOk) pedsRef.child(p.id).set({money:p.money,color:p.color,speed:p.speed,x0:Math.round(x),y0:Math.round(y)});
+  if(firebaseOk&&!fbFailed) fbGuard(pedsRef.child(p.id).set({money:p.money,color:p.color,speed:p.speed,x0:Math.round(x),y0:Math.round(y)}));
 }
 
 let lastPedSync=0;
 function syncPedsHost(){
-  if(!firebaseOk) return;
+  if(!firebaseOk||fbFailed) return;
   const now=Date.now();
   if(now-lastPedSync<150) return;
   lastPedSync=now;
   const pos={};
   pedestrians.forEach(p=>pos[p.id]={x:Math.round(p.x),y:Math.round(p.y)});
-  pedPosRef.set(pos);
+  fbGuard(pedPosRef.set(pos));
 }  
 
 function updatePedestrians(){
@@ -1177,12 +1190,12 @@ function updatePedestrians(){
     p.x+=Math.cos(ang)*p.speed;
     p.y+=Math.sin(ang)*p.speed;
     if(!p.leaving && p.money<10 && Math.random()<0.001){
-      if(firebaseOk) pedsRef.child(p.id+'/money').transaction(m=>m===null?m:Math.min(10,m+1));
+      if(firebaseOk&&!fbFailed) pedsRef.child(p.id+'/money').transaction(m=>m===null?m:Math.min(10,m+1),(err)=>{ if(err) noteFbError(err); });
       else p.money++;
     }
     if(p.leaving && (p.x<-20||p.x>WORLD_W+20)){
       p.gone=true;
-      if(firebaseOk) pedsRef.child(p.id).remove();
+      if(firebaseOk&&!fbFailed) fbGuard(pedsRef.child(p.id).remove());
     }
   });
   pedestrians=pedestrians.filter(p=>!p.gone);
@@ -1225,7 +1238,7 @@ function killPed(p,who){
     if(cur===null) return null;     // may just be uncached: Firebase re-checks with the real value
     got=true; loot=cur.money; return null;
   },(err,committed)=>{
-    if(err){ pedestrians=pedestrians.filter(q=>q!==p); payout(p.money); return; }
+    if(err){ noteFbError(err); pedestrians=pedestrians.filter(q=>q!==p); payout(p.money); return; }
     if(committed && got) payout(loot);
   });
 }
@@ -1245,7 +1258,7 @@ function stealFromPed(p,amt){
     cur.money-=taken;
     return cur;
   },(err,committed)=>{
-    if(!err && committed && taken>0){ money+=taken; toast('Goon stole $'+taken+'!'); }
+    if(err){ noteFbError(err); return; }
   });
 }
 
