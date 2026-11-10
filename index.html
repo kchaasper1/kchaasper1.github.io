@@ -644,6 +644,7 @@ function initMultiplayer(){
         pedestrians.push(p);
       }
       p.money=v.money; p.color=v.color; p.speed=v.speed;
+      p.synced=true;
     });
   });
   // pedestrian positions (written by the host)
@@ -1208,45 +1209,46 @@ function trackHeading(p){
 
 // Shared kill/steal helpers: transactions make sure only one player gets the money
 function killPed(p,who){
-  if(!firebaseOk){
-    money+=p.money; pedestrians=pedestrians.filter(q=>q!==p);
-    moneyDisplay.textContent='💰 $'+money;
-    toast((who==='goon'?'A goon':'You')+' shot a pedestrian'+(p.money?' (+$'+p.money+')':''));
+  const payout=(loot)=>{
+    money+=loot;
+    toast((who==='goon'?'A goon':'You')+' shot a pedestrian'+(loot?' (+$'+loot+')':''));
+  };
+  if(!firebaseOk || fbFailed || !p.synced){       // not confirmed by the database: resolve locally
+    pedestrians=pedestrians.filter(q=>q!==p);
+    if(firebaseOk) pedsRef.child(p.id).remove().catch(()=>{});
+    payout(p.money);
     return;
   }
-  let loot=0;
+  let loot=0, got=false;
   pedsRef.child(p.id).transaction(cur=>{
-    if(!cur) return;          // already gone, abort
-    loot=cur.money;
-    return null;              // delete it
+    got=false;
+    if(cur===null) return null;     // may just be uncached: Firebase re-checks with the real value
+    got=true; loot=cur.money; return null;
   },(err,committed)=>{
-    if(committed){
-      money+=loot;
-      moneyDisplay.textContent='💰 $'+money;
-      toast((who==='goon'?'A goon':'You')+' shot a pedestrian'+(loot?' (+$'+loot+')':''));
-    }
+    if(err){ pedestrians=pedestrians.filter(q=>q!==p); payout(p.money); return; }
+    if(committed && got) payout(loot);
   });
 }
 
 function stealFromPed(p,amt){
-  if(!firebaseOk){
-    const t=Math.min(amt,p.money); p.money-=t; money+=t;
-    moneyDisplay.textContent='💰 $'+money; toast('Goon stole $'+t+'!');
+  if(!firebaseOk || fbFailed || !p.synced){
+    const t=Math.min(amt,p.money); if(t<=0) return;
+    p.money-=t; money+=t; toast('Goon stole $'+t+'!');
     return;
   }
   let taken=0;
-  pedsRef.child(p.id+'/money').transaction(m=>{
-    if(m===null||m<=0) return;
-    taken=Math.min(amt,m);
-    return m-taken;
+  pedsRef.child(p.id).transaction(cur=>{
+    taken=0;
+    if(cur===null) return null;
+    if(cur.money<=0) return cur;
+    taken=Math.min(amt,cur.money);
+    cur.money-=taken;
+    return cur;
   },(err,committed)=>{
-    if(committed && taken>0){
-      money+=taken;
-      moneyDisplay.textContent='💰 $'+money;
-      toast('Goon stole $'+taken+'!');
-    }
+    if(!err && committed && taken>0){ money+=taken; toast('Goon stole $'+taken+'!'); }
   });
 }
+
 
 
 function openGame(type,label){
