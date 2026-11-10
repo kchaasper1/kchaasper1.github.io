@@ -48,6 +48,12 @@
   
   button{touch-action:manipulation;}
   #fireBtn{display:none;margin-top:8px;margin-left:8px;}
+
+  #staminaRow{display:flex;align-items:center;justify-content:flex-end;gap:6px;font-size:.8rem;margin-top:4px;}
+  #staminaWrap{width:110px;height:8px;background:#0006;border-radius:4px;overflow:hidden;border:1px solid var(--border);}
+  #staminaBar{height:100%;width:100%;background:#7c7;}
+  #staminaBar.low{background:#e66;}
+  #runBtn{display:none;margin-top:8px;margin-left:8px;}
 </style>
 </head>
 <body>
@@ -66,7 +72,7 @@
   <canvas id="canvas" width="720" height="460"></canvas>
   
   <div id="infoRow">
-  <div id="hint">Arrow keys / WASD to move. Space to shoot.</div>
+  <div id="hint">Arrow keys / WASD to move. Shift to run. Space to shoot.</div>
   <div id="stats">
     <div id="moneyRow">
       <div id="moneyDisplay">💰 $5</div>
@@ -74,12 +80,14 @@
   </div>
     <div id="expenseDisplay">Expenses: $0/min</div>
     <div id="mineralDisplay">⛏️ Iron 0 · Copper 0 · Gold 0</div>
+    <div id="staminaRow">🏃 <div id="staminaWrap"><div id="staminaBar"></div></div></div>
   </div>
 </div>
 <div id="toast"></div>
   
   <button id="playCta">Play mini-game (E)</button>
   <button id="fireBtn">🔫 Fire</button>
+  <button id="runBtn">🏃 Run: OFF</button>
 </div>
 
 
@@ -144,6 +152,8 @@ const firebaseConfig = {
 let db = null, playersRef = null, myId = null, myName = "", myColor = "#e0824f";
 let pedsRef=null, pedPosRef=null, goonsRef=null;
 let playersLoaded=false, otherGoons={};
+let fbFailed=false;
+const lastSeen={};
 let firebaseOk = false;
 try {
   if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
@@ -197,6 +207,20 @@ let player={x:360,y:420,r:12};
 let facing={dx:0,dy:-1};
 const HIT_PENALTY=3;   // dollars lost per hit
 let hitUntil=0;
+
+const STAMINA_MAX=100;
+const STAMINA_DRAIN=0.55;    // per step: about 3 seconds of running
+const STAMINA_REGEN=0.25;    // per step: about 7 seconds to refill
+const STAMINA_RESUME=25;     // after running out, you need this much before you can run again
+const RUN_SPEED=5.6, WALK_SPEED=3.2;
+let stamina=STAMINA_MAX, exhausted=false, runOn=false, lastStaminaPct=-1;
+const staminaBar=document.getElementById('staminaBar');
+const runBtn=document.getElementById('runBtn');
+runBtn.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  runOn=!runOn;
+  runBtn.textContent=runOn?'🏃 Run: ON':'🏃 Run: OFF';
+});
 
 const touchMode = window.matchMedia('(pointer: coarse)').matches; // set to true to test on desktop
 let moveTarget=null;
@@ -562,6 +586,7 @@ document.getElementById('startBtn').onclick=()=>{
   if(touchMode){
   document.getElementById('hint').textContent='Tap to walk. Tap a door, the alley or a mini-game spot while standing at it to use it.';
   fireBtn.style.display='inline-block';
+  runBtn.style.display='inline-block';
 }
   
   myName=document.getElementById('nameInput').value.trim() || 'Guest';
@@ -583,15 +608,28 @@ function initMultiplayer(){
   updatePresence();
 
   playersRef.on('value', snap=>{
-  const val=snap.val()||{};
-  delete val[myId];
-  const firstLoad=!playersLoaded;
-  otherPlayers=val;
-  playersLoaded=true;
-  if(firstLoad && Object.keys(val).length===0){
-    pedsRef.remove(); pedPosRef.remove(); goonsRef.remove(); // nobody else is here, so clear leftovers
-  }
-});
+    const val=snap.val()||{};
+    delete val[myId];
+    const now=Date.now();
+    Object.keys(val).forEach(id=>{
+      const ls=lastSeen[id];
+      if(!ls || ls.ts!==val[id].ts) lastSeen[id]={ts:val[id].ts, at:now};
+    });
+    const firstLoad=!playersLoaded;
+    otherPlayers=val;
+    playersLoaded=true;
+    fbFailed=false;
+    if(firstLoad && Object.keys(val).length===0){
+      pedsRef.remove(); pedPosRef.remove(); goonsRef.remove();
+    }
+  }, err=>{
+    console.error('Firebase read failed:',err);
+    fbFailed=true;
+    toast('Multiplayer connection failed - running solo');
+  });
+  setTimeout(()=>{
+    if(!playersLoaded){ fbFailed=true; console.warn('Firebase did not respond in 5s - running solo'); }
+  },5000);
   goonsRef.on('value', snap=>{ otherGoons=snap.val()||{}; });
 
   // pedestrian details (money, color) live here
@@ -619,9 +657,14 @@ function initMultiplayer(){
 }
   
 function isHost(){
-  if(!firebaseOk) return true;       // solo mode: you simulate everything
+  if(!firebaseOk || fbFailed) return true;
   if(!playersLoaded) return false;
-  return Object.keys(otherPlayers).every(id=>id>myId); // lowest ID wins
+  const now=Date.now();
+  return Object.keys(otherPlayers).every(id=>{
+    const ls=lastSeen[id];
+    const active = ls && now-ls.at<6000;   // heartbeat seen in the last 6 seconds
+    return !active || id>myId;
+  });
 }
 
 let lastSent=0;
@@ -630,7 +673,7 @@ function updatePresence(){
   const now=Date.now();
   if(now-lastSent<120) return;
   lastSent=now;
-  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene});
+  playersRef.child(myId).set({name:myName,color:myColor,x:player.x,y:player.y,room:currentRoom?currentRoom.name:null,scene:scene,ts:now});
 }
 
 
@@ -643,11 +686,15 @@ document.addEventListener('keydown',e=>{
   if(e.key===' '){ e.preventDefault(); fireBullet(); }
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+window.addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
 
 
 
 function update(){
-  let dx=0,dy=0, speed=3.2;
+  let dx=0,dy=0;
+  const intent = keys['arrowup']||keys['w']||keys['arrowdown']||keys['s']||keys['arrowleft']||keys['a']||keys['arrowright']||keys['d']||moveTarget;
+  const running = (keys['shift']||runOn) && intent && !exhausted && stamina>0;
+  const speed = running ? RUN_SPEED : WALK_SPEED;
   if(keys['arrowup']||keys['w']) dy=-speed;
   if(keys['arrowdown']||keys['s']) dy=speed;
   if(keys['arrowleft']||keys['a']) dx=-speed;
@@ -677,6 +724,20 @@ function update(){
     player.y=Math.min(460-player.r, Math.max(player.r, player.y+dy));
   }
 
+  if(running){
+    stamina=Math.max(0,stamina-STAMINA_DRAIN);
+    if(stamina===0) exhausted=true;
+  } else {
+    stamina=Math.min(STAMINA_MAX,stamina+STAMINA_REGEN);
+    if(exhausted && stamina>=STAMINA_RESUME) exhausted=false;
+  }
+  const pct=Math.round(stamina);
+  if(pct!==lastStaminaPct){
+    lastStaminaPct=pct;
+    staminaBar.style.width=pct+'%';
+    staminaBar.classList.toggle('low',exhausted);
+  }
+  
   if(scene==='inside') currentRoom=roomAt(player.x);
   updatePresence();
 
