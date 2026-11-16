@@ -57,11 +57,11 @@ function drawTree(t,ox,oy){
 }
 
 // ---------- Sky (placeholder: replace the body with your sky art later) ----------
-<!-- 20)  function drawSky(){ -->
-<!-- 20)  const g=ctx.createLinearGradient(0,0,0,SKY_H); -->
-<!-- 20)  g.addColorStop(0,'#3d6fb0'); g.addColorStop(1,'#a8cdea'); -->
-<!-- 20)  ctx.fillStyle=g; ctx.fillRect(0,0,CANVAS_W,SKY_H); -->
-<!-- 20)} -->
+function drawSky(){
+  const g=ctx.createLinearGradient(0,0,0,SKY_H);
+  g.addColorStop(0,'#3d6fb0'); g.addColorStop(1,'#a8cdea');
+  ctx.fillStyle=g; ctx.fillRect(0,0,CANVAS_W,SKY_H);
+}
 
 // Everything flat on the ground. Put your grass here (e.g. fillStyle = ctx.createPattern(img,'repeat'))
 function drawGroundFlat(){
@@ -224,7 +224,7 @@ function draw(){
   if(scene==='outside'){
     cam.x=player.x-CANVAS_W/2;
     cam.y=player.y-GROUND_CY/TILT;
-  <!-- 20)  drawSky(); -->
+    drawSky();
     drawGroundLayer();
     drawStandingLayer();
     drawMinimap();
