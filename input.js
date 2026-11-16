@@ -23,8 +23,10 @@ playCta.onclick=()=>onInteract();
 // Touch / tap-to-move
 function canvasPoint(e){
   const r=canvas.getBoundingClientRect();
-  let x=(e.clientX-r.left)*canvas.width/r.width+cam.x;
-  let y=(e.clientY-r.top)*canvas.height/r.height+cam.y;
+  const sx=(e.clientX-r.left)*canvas.width/r.width;
+  const sy=(e.clientY-r.top)*canvas.height/r.height;
+  let x=sx+cam.x;
+  let y=scene==='outside' ? sy/TILT+cam.y : sy+cam.y;
   if(scene==='outside'){ x=wrapX(x); y=wrapY(y); }
   return {x,y};
 }
