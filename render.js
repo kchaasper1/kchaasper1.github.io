@@ -1,113 +1,144 @@
 // ---- Rendering ----
 const cam={x:0,y:0};
 
-function draw(){
-  ctx.clearRect(0,0,720,460);
-  if(scene==='outside'){
-    cam.x=player.x-360; cam.y=player.y-230;
-    const ix0=Math.floor(cam.x/WORLD_W), ix1=Math.floor((cam.x+719)/WORLD_W);
-    const iy0=Math.floor(cam.y/WORLD_H), iy1=Math.floor((cam.y+459)/WORLD_H);
-    for(let ix=ix0; ix<=ix1; ix++){
-      for(let iy=iy0; iy<=iy1; iy++){
-        ctx.save();
-        ctx.translate(ix*WORLD_W-cam.x, iy*WORLD_H-cam.y);
-        drawOutside();
-        drawEntities();
-        ctx.restore();
-      }
-    }
-    drawMinimap();
-  } else {
-    cam.x=0; cam.y=0;
-    if(scene==='mine') drawMine(); else drawInside();
-    drawEntities();
+// ---------- Standing things ----------
+const BUILDINGS=[
+  ...obstacles.map(o=>({b:o,color:o.color,label:o.label,ht:BUILDING_HEIGHTS[o.label]||70,cross:o===church})),
+  {b:outside.building,color:'#8a7054',label:'SUPERMARKET',ht:BUILDING_HEIGHTS.SUPERMARKET,door:outside.door},
+  {b:bank,color:'#9a9a9a',label:'BANK',ht:BUILDING_HEIGHTS.BANK,door:bankDoor},
+  ...enterables.map(e=>({b:e.b,color:e.color,label:e.label,ht:BUILDING_HEIGHTS[e.label]||70,door:e.door}))
+];
+
+function shade(hex,f){
+  const n=parseInt(hex.slice(1),16);
+  const c=v=>Math.max(0,Math.min(255,Math.round(v*f)));
+  return `rgb(${c(n>>16)},${c((n>>8)&255)},${c(n&255)})`;
+}
+
+function drawAvatar(x,y,color,label){
+  ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2);
+  ctx.fillStyle=color; ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(label, x, y-16);
+}
+
+// x,y = screen position of the character's feet
+function drawChar(x,y,color,label,r,labelColor){
+  ctx.fillStyle='#0004'; ctx.beginPath(); ctx.ellipse(x,y,r,r*TILT,0,0,Math.PI*2); ctx.fill();   // shadow
+  ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y-r*1.3,r,0,Math.PI*2); ctx.fill();            // body
+  if(label){
+    ctx.fillStyle=labelColor||'#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(label,x,y-r*2.3-3);
   }
 }
 
-function drawEntities(){
-  bullets.forEach(b=>{
-    if(b.owner==='goon' && scene!=='outside') return;
-    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
-    ctx.fillStyle=b.owner==='goon' ? '#ff8a5c' : '#ffe066'; ctx.fill();
-  });
-  Object.values(otherPlayers).forEach(p=>{
-    if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
-  });
-  drawAvatar(player.x,player.y,myColor,myName+' (you)');
-  if(Date.now()<hitUntil){
-    ctx.beginPath(); ctx.arc(player.x,player.y,16,0,Math.PI*2);
-    ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+function drawBuilding(bd,ox,oy){
+  const b=bd.b, H=bd.ht;
+  const x=b.x+ox-cam.x, yTop=(b.y+oy-cam.y)*TILT, yBot=(b.y+b.h+oy-cam.y)*TILT;
+  ctx.fillStyle=shade(bd.color,1.15); ctx.fillRect(x,yTop-H,b.w,yBot-yTop);   // roof
+  ctx.fillStyle=shade(bd.color,0.8);  ctx.fillRect(x,yBot-H,b.w,H);            // front wall
+  ctx.strokeStyle='#0005'; ctx.strokeRect(x,yTop-H,b.w,yBot-yTop+H);
+  if(bd.door){
+    ctx.fillStyle='#2a2623';
+    ctx.fillRect(bd.door.x+ox-cam.x,yBot-H*0.55,bd.door.w,H*0.55);
+  }
+  ctx.fillStyle='#fff'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(bd.label,x+b.w/2,yBot-H+16);
+  if(bd.cross){
+    const cx=x+b.w/2, cy=yTop-H+(yBot-yTop)/2;
+    ctx.fillRect(cx-4,cy-18,8,36); ctx.fillRect(cx-13,cy-8,26,8);
   }
 }
 
-function drawGoon(x,y,label){
-  ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
-  ctx.fillStyle='#444'; ctx.fill();
-  ctx.strokeStyle='#999'; ctx.stroke();
-  ctx.fillStyle='#ddd'; ctx.font='10px sans-serif'; ctx.textAlign='center';
-  ctx.fillText(label, x, y-15);
+function drawTree(t,ox,oy){
+  const x=t.x+ox-cam.x, y=(t.y+oy-cam.y)*TILT;
+  ctx.fillStyle='#5a4028'; ctx.fillRect(x-2,y-t.r*0.8,4,t.r*0.8);
+  ctx.fillStyle='#3b7a3b'; ctx.beginPath(); ctx.arc(x,y-t.r*1.6,t.r*1.2,0,Math.PI*2); ctx.fill();
 }
 
-function drawOutside(){
-  ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,WORLD_W,WORLD_H);
+// ---------- Sky (placeholder: replace the body with your sky art later) ----------
+function drawSky(){
+  const g=ctx.createLinearGradient(0,0,0,SKY_H);
+  g.addColorStop(0,'#3d6fb0'); g.addColorStop(1,'#a8cdea');
+  ctx.fillStyle=g; ctx.fillRect(0,0,CANVAS_W,SKY_H);
+}
+
+// Everything flat on the ground. Put your grass here (e.g. fillStyle = ctx.createPattern(img,'repeat'))
+function drawGroundFlat(){
+  ctx.fillStyle='#4a6b4a'; ctx.fillRect(0,0,WORLD_W,WORLD_H);          // grass
   ctx.fillStyle='#5a8a52'; ctx.fillRect(park.x,park.y,park.w,park.h);
   ctx.fillStyle='#2f5f8f'; ctx.beginPath();
   ctx.ellipse(lake.cx,lake.cy,lake.rx,lake.ry,0,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#555'; roads.forEach(r=>ctx.fillRect(r.x,r.y,r.w,r.h));
-  ctx.fillStyle='#777'; ctx.fillRect(0,380,WORLD_W,20); // sidewalk
-
-  trees.forEach(t=>{
-    ctx.fillStyle='#3b7a3b'; ctx.beginPath(); ctx.arc(t.x,t.y,t.r,0,Math.PI*2); ctx.fill();
-  });
-
-  ctx.textAlign='center'; ctx.font='12px sans-serif';
-  obstacles.forEach(o=>{
-    ctx.fillStyle=o.color; ctx.fillRect(o.x,o.y,o.w,o.h);
-    ctx.fillStyle='#fff'; ctx.fillText(o.label,o.x+o.w/2,o.y+o.h/2);
-  });
-
-  const b=outside.building;
-  ctx.fillStyle='#8a7054'; ctx.fillRect(b.x,b.y,b.w,b.h);
-  ctx.fillStyle='#5b4a38'; ctx.fillRect(outside.door.x,outside.door.y,outside.door.w,outside.door.h+(b.y+b.h-outside.door.y));
-  ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
-  ctx.fillText('SUPERMARKET', outside.label.x, outside.label.y);
-  ctx.fillStyle='#9a9a9a'; ctx.fillRect(bank.x,bank.y,bank.w,bank.h);
-  ctx.fillStyle='#5b5b6b'; ctx.fillRect(bankDoor.x,bankDoor.y,bankDoor.w,bankDoor.h);
-  ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
-  ctx.fillText('BANK', bank.x+bank.w/2, bank.y+bank.h/2-40);
-
-  enterables.forEach(en=>{
-    const b=en.b, d=en.door;
-    ctx.fillStyle=en.color; ctx.fillRect(b.x,b.y,b.w,b.h);
-    ctx.fillStyle='#2a2623'; ctx.fillRect(d.x,d.y,d.w,d.h);
-    ctx.fillStyle='#fff'; ctx.font='14px sans-serif'; ctx.textAlign='center';
-    ctx.fillText(en.label,b.x+b.w/2,b.y+b.h/2-20);
-  });
-
-  // cross on the church
-  ctx.fillStyle='#fff';
-  ctx.fillRect(church.x+church.w/2-5,church.y+14,10,50);
-  ctx.fillRect(church.x+church.w/2-16,church.y+27,32,10);
-
+  ctx.fillStyle='#777'; ctx.fillRect(0,380,WORLD_W,20);                // sidewalk
   ctx.fillStyle='#1a1a1a'; ctx.fillRect(alley.x,alley.y,alley.w,alley.h);
-  ctx.fillStyle='#ccc'; ctx.font='13px sans-serif';
-  ctx.fillText('DARK ALLEY', alley.x+alley.w/2, alley.y+20);
-  ctx.font='11px sans-serif'; ctx.fillStyle='#999';
-  ctx.fillText('Hire goon: $'+GOON_COST, alley.x+alley.w/2, alley.y+38);
+}
 
-  pedestrians.forEach(p=>{
-    ctx.beginPath(); ctx.arc(p.x,p.y,9,0,Math.PI*2);
-    ctx.fillStyle=p.color; ctx.fill();
-    ctx.fillStyle='#8f8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
-    ctx.fillText('$'+p.money, p.x, p.y-14);
-  });
+// ---------- Ground (squashed by TILT) ----------
+function drawGroundLayer(){
+  for(const ox of [-WORLD_W,0,WORLD_W]) for(const oy of [-WORLD_H,0,WORLD_H]){
+    const left=ox-cam.x, top=(oy-cam.y)*TILT;
+    if(left+WORLD_W<0||left>CANVAS_W||top+WORLD_H*TILT<SKY_H||top>CANVAS_H) continue;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0,SKY_H,CANVAS_W,CANVAS_H-SKY_H); ctx.clip();   // ground never covers the sky
+    ctx.transform(1,0,0,TILT,left,top);
+    drawGroundFlat();
+    ctx.restore();
+  }
+}
 
-  goons.forEach(g=>drawGoon(g.x,g.y,myName+"'s goon"));
-  Object.keys(otherGoons).forEach(oid=>{
-    const owner=otherPlayers[oid];
-    if(oid===myId || !owner) return;
-    Object.values(otherGoons[oid]||{}).forEach(g=>drawGoon(g.x,g.y,owner.name+"'s goon"));
-  });
+function drawStandingLayer(){
+  const items=[];
+  const push=(sy,xl,xr,fn)=>{
+    if(xr<-60||xl>CANVAS_W+60||sy<SKY_H-10||sy>CANVAS_H+140) return;   // off screen
+    items.push({sy,fn});
+  };
+  for(const ox of [-WORLD_W,0,WORLD_W]) for(const oy of [-WORLD_H,0,WORLD_H]){
+    const X=wx=>wx+ox-cam.x, Y=wy=>(wy+oy-cam.y)*TILT;
+
+    BUILDINGS.forEach(bd=>push(Y(bd.b.y+bd.b.h),X(bd.b.x),X(bd.b.x+bd.b.w),()=>drawBuilding(bd,ox,oy)));
+    trees.forEach(t=>push(Y(t.y),X(t.x),X(t.x),()=>drawTree(t,ox,oy)));
+
+    push(Y(alley.y+alley.h/2),X(alley.x),X(alley.x+alley.w),()=>{
+      ctx.textAlign='center'; ctx.fillStyle='#ccc'; ctx.font='13px sans-serif';
+      ctx.fillText('DARK ALLEY',X(alley.x+alley.w/2),Y(alley.y+alley.h/2)-6);
+      ctx.fillStyle='#999'; ctx.font='11px sans-serif';
+      ctx.fillText('Hire goon: $'+GOON_COST,X(alley.x+alley.w/2),Y(alley.y+alley.h/2)+10);
+    });
+
+    pedestrians.forEach(p=>push(Y(p.y),X(p.x),X(p.x),
+      ()=>drawChar(X(p.x),Y(p.y),p.color,'$'+p.money,9,'#8f8')));
+
+    goons.forEach(g=>push(Y(g.y),X(g.x),X(g.x),
+      ()=>drawChar(X(g.x),Y(g.y),'#444',myName+"'s goon",10,'#ddd')));
+    Object.keys(otherGoons).forEach(oid=>{
+      const owner=otherPlayers[oid];
+      if(oid===myId||!owner) return;
+      Object.values(otherGoons[oid]||{}).forEach(g=>push(Y(g.y),X(g.x),X(g.x),
+        ()=>drawChar(X(g.x),Y(g.y),'#444',owner.name+"'s goon",10,'#ddd')));
+    });
+
+    Object.values(otherPlayers).forEach(p=>{
+      if(p.scene!=='outside') return;
+      push(Y(p.y),X(p.x),X(p.x),()=>drawChar(X(p.x),Y(p.y),p.color,p.name,12));
+    });
+
+    push(Y(player.y),X(player.x),X(player.x),()=>{
+      drawChar(X(player.x),Y(player.y),myColor,myName+' (you)',12);
+      if(Date.now()<hitUntil){
+        ctx.beginPath(); ctx.arc(X(player.x),Y(player.y)-16,17,0,Math.PI*2);
+        ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+      }
+    });
+
+    bullets.forEach(b=>push(Y(b.y),X(b.x),X(b.x),()=>{
+      ctx.fillStyle='#0004'; ctx.beginPath(); ctx.ellipse(X(b.x),Y(b.y),4,2,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(X(b.x),Y(b.y)-10,4,0,Math.PI*2);
+      ctx.fillStyle=b.owner==='goon'?'#ff8a5c':'#ffe066'; ctx.fill();
+    }));
+  }
+  items.sort((a,b)=>a.sy-b.sy);      // far things first, near things on top
+  items.forEach(i=>i.fn());
 }
 
 function drawMinimap(){
@@ -132,8 +163,25 @@ function drawMinimap(){
   const vx=wrapX(cam.x), vy=wrapY(cam.y);
   ctx.strokeStyle='#fff';
   for(const ox of [-WORLD_W,0]) for(const oy of [-WORLD_H,0])
-    ctx.strokeRect(mx+(vx+ox)*s,my+(vy+oy)*s,720*s,460*s);
+    ctx.strokeRect(mx+(vx+ox)*s,my+(vy+oy)*s,720*s,(CANVAS_H/TILT)*s);
   ctx.restore();
+}
+
+function drawMine(){
+  ctx.fillStyle='#1d1b1a'; ctx.fillRect(0,0,720,460);
+  ctx.fillStyle='#fff9'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('THE MINE',360,24);
+  ctx.fillStyle='#4fae8f'; ctx.fillRect(mineExit.x-10,mineExit.y-16,20,32);
+  ctx.fillStyle='#fff9'; ctx.font='11px sans-serif';
+  ctx.fillText('exit',mineExit.x,mineExit.y+30);
+  mineNodes.forEach(n=>{
+    if(n.hp<=0) return;
+    ctx.beginPath(); ctx.arc(n.x,n.y,14,0,Math.PI*2);
+    ctx.fillStyle=ORE_COLORS[n.type]; ctx.fill();
+    ctx.strokeStyle='#0008'; ctx.stroke();
+    ctx.fillStyle='#fffc'; ctx.font='10px sans-serif';
+    ctx.fillText(n.type+(n.hp<3?' '+'●'.repeat(n.hp):''),n.x,n.y-19);
+  });
 }
 
 function drawInside(){
@@ -153,28 +201,38 @@ function drawInside(){
   ctx.fillText('exit', insideExit.x, insideExit.y+30);
 }
 
-function drawAvatar(x,y,color,label){
-  ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2);
-  ctx.fillStyle=color; ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
-  ctx.fillText(label, x, y-16);
+function drawEntities(){
+  bullets.forEach(b=>{
+    if(b.owner==='goon' && scene!=='outside') return;
+    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2);
+    ctx.fillStyle=b.owner==='goon' ? '#ff8a5c' : '#ffe066'; ctx.fill();
+  });
+  Object.values(otherPlayers).forEach(p=>{
+    if(p.scene===scene) drawAvatar(p.x,p.y,p.color,p.name);
+  });
+  drawAvatar(player.x,player.y,myColor,myName+' (you)');
+  if(Date.now()<hitUntil){
+    ctx.beginPath(); ctx.arc(player.x,player.y,16,0,Math.PI*2);
+    ctx.strokeStyle='#f44'; ctx.lineWidth=3; ctx.stroke(); ctx.lineWidth=1;
+  }
 }
 
-function drawMine(){
-  ctx.fillStyle='#1d1b1a'; ctx.fillRect(0,0,720,460);
-  ctx.fillStyle='#fff9'; ctx.font='12px sans-serif'; ctx.textAlign='center';
-  ctx.fillText('THE MINE',360,24);
-  ctx.fillStyle='#4fae8f'; ctx.fillRect(mineExit.x-10,mineExit.y-16,20,32);
-  ctx.fillStyle='#fff9'; ctx.font='11px sans-serif';
-  ctx.fillText('exit',mineExit.x,mineExit.y+30);
-  mineNodes.forEach(n=>{
-    if(n.hp<=0) return;
-    ctx.beginPath(); ctx.arc(n.x,n.y,14,0,Math.PI*2);
-    ctx.fillStyle=ORE_COLORS[n.type]; ctx.fill();
-    ctx.strokeStyle='#0008'; ctx.stroke();
-    ctx.fillStyle='#fffc'; ctx.font='10px sans-serif';
-    ctx.fillText(n.type+(n.hp<3?' '+'●'.repeat(n.hp):''),n.x,n.y-19);
-  });
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.imageSmoothingEnabled=false;            // keeps pixel art crisp later
+  ctx.clearRect(0,0,CANVAS_W,CANVAS_H);
+  if(scene==='outside'){
+    cam.x=player.x-CANVAS_W/2;
+    cam.y=player.y-GROUND_CY/TILT;
+    drawSky();
+    drawGroundLayer();
+    drawStandingLayer();
+    drawMinimap();
+  } else {
+    cam.x=0; cam.y=0;
+    if(scene==='mine') drawMine(); else drawInside();
+    drawEntities();                            // flat scenes keep the old entity drawing
+  }
 }
 
 function loop(){ draw(); requestAnimationFrame(loop); }
