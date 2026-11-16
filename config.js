@@ -36,3 +36,9 @@ const MAX_PEDS=20;
 const LEAVE_CHANCE=0.0003;  // per frame, per pedestrian
 const SPAWN_CHANCE=0.006;   // per frame while below MAX_PEDS
 
+// ---- Camera ----
+const CANVAS_W=720, CANVAS_H=460;
+const TILT=0.5;        // 1 = flat top-down, lower = more tilted
+const SKY_H=70;        // height of the sky band at the top of the screen
+const GROUND_CY=(SKY_H+CANVAS_H)/2;   // screen y where your character stands
+const BUILDING_HEIGHTS={HOUSE:70,SHOP:50,OFFICE:60,WAREHOUSE:80,CHURCH:90,SUPERMARKET:90,BANK:100,MINE:70,GARAGE:60};
